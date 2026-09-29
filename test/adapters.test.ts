@@ -342,6 +342,55 @@ export default defineAdapter({ description: "open", access: "read", args: [{ nam
 	expect(await runCommand("demo", "open", { screen: "nope" }, runOptions(registry, robot))).toMatchObject({ ok: false, error: { code: "invalid_args" } });
 });
 
+test("the dreamface-app map is consistent: parents exist, ids are unique, traps and commands name real screens", async () => {
+	const map = await import(pathToFileURL(path.join(BUILTIN_ADAPTERS_DIR, "dreamface-app", "_sitemap.js")).href);
+	const ids = map.SCREENS.map((s: { id: string }) => s.id);
+	expect(new Set(ids).size).toBe(ids.length);
+	expect(map.SCREENS[0]).toMatchObject({ id: "home", parent: null });
+	for (const s of map.SCREENS) {
+		if (s.parent !== null) {
+			expect(ids.indexOf(s.parent), `parent of ${s.id}`).toBeGreaterThanOrEqual(0);
+			expect(ids.indexOf(s.parent), `${s.id} comes after its parent`).toBeLessThan(ids.indexOf(s.id));
+		}
+		expect(Array.isArray(s.markers), `markers of ${s.id}`).toBe(true);
+		for (const tap of s.open?.taps ?? []) {
+			expect(tap.trim().length, `a tap of ${s.id}`).toBeGreaterThan(0);
+		}
+	}
+	for (const trap of map.TRAPS) {
+		for (const id of trap.screens ?? []) {
+			expect(ids, `trap ${trap.id}`).toContain(id);
+		}
+	}
+	for (const command of map.COMMANDS) {
+		for (const id of command.screens) {
+			expect(ids, `command ${command.command}`).toContain(id);
+		}
+	}
+	expect(map.tree()).toContain("  credits");
+});
+
+test("dreamface-app reads a number over its label, and tags next to a name", async () => {
+	const read = await import(pathToFileURL(path.join(BUILTIN_ADAPTERS_DIR, "dreamface-app", "_read.js")).href);
+	const at = (text: string, x: number, y: number, width: number, height: number) => ({ type: "android.widget.TextView", text, rect: { x, y, width, height } });
+	// Purchase Credits as the app lays it out (DreamFace 6.34.1): each number sits over its label.
+	const credits = [
+		at("Purchase Credits", 112, 91, 856, 82),
+		at("12", 556, 317, 53, 84), at("Total Credits", 412, 414, 257, 45),
+		at("2", 296, 572, 32, 73), at("Purchased", 183, 653, 187, 55),
+		at("10", 784, 572, 35, 73), at("Weekly Credits", 637, 653, 260, 55),
+	];
+	expect(read.numberAbove(credits, "Total Credits")).toBe(12);
+	expect(read.numberAbove(credits, "Purchased")).toBe(2);
+	expect(read.numberAbove(credits, "Weekly Credits")).toBe(10);
+	expect(read.numberAbove(credits, "History Of Credits")).toBeNull();
+	expect(read.screenSize(credits)).toEqual({ width: 968, height: 708 });
+
+	const models = [at("Dream Image 2.0", 84, 1351, 301, 61), at("GPT Image 2.5 Sunburst", 480, 1351, 415, 61), at("New", 929, 1354, 71, 58)];
+	expect(read.tagsNear(models, models[0])).toEqual([]);
+	expect(read.tagsNear(models, models[1])).toEqual(["New"]);
+});
+
 test("device locks run calls on one device in order and let other devices through", async () => {
 	const locks = new DeviceLocks();
 	const order: string[] = [];

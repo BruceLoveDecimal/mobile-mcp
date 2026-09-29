@@ -5,9 +5,17 @@ interface (tap, type, assert, deep link): the app's login token lives in its san
 (opencli-mcp `dreamface/*`) nothing here calls the API. Server-side state — credits, works, task status — is checked
 with the web commands on the same account; `COMMANDS` in `_sitemap.js` says which.
 
-- **Read**: `sitemap` (never touches the device), `open` (launches the app and navigates; never submits).
-- **Write**: none yet. A write command (a generation flow) is marked `access: 'write'`, spends credits and is run at
-  most once per test case.
+- **Read**: `sitemap` (never touches the device), `open {screen}` (restarts or launches the app and navigates by the
+  map; never submits), `credits` (total / purchased / weekly credits from Purchase Credits, reached through the AI
+  Video header, and the free agent uses from the Agent tab — the web `dreamface/credits`), `image-models` (the AI Image
+  models in the composer's row, first is the default — the web `dreamface/image-models`).
+- **Write**: none yet. A write command (a generation flow) is marked `access: 'write'`, spends credits or a free use and
+  is run at most once per test case.
+
+Commands of the web adapter that have no app command yet, and why: `works` / `whoami` (the Profile tab cannot be read,
+see the map's TRAPS `profile-unreadable`), `avatars` / `voices` (the samples are images without text), a video model
+list (the model button opens its sheet only sometimes, TRAPS `video-model-button`), and the generation commands
+(`ai-image`, `ai-video`, `avatar-video`, `agent-*`: not written until one run per flow has been checked on a device).
 
 ## App map
 
@@ -16,8 +24,11 @@ with the web commands on the same account; `COMMANDS` in `_sitemap.js` says whic
 buttons. `open {screen}` walks the same map: the deepest `open.url` deep link on the way, then the `open.taps` texts,
 waiting for each screen's `markers`.
 
-The data lives in `_sitemap.js` (`VERIFIED`, `SCREENS`, `TRAPS`, `COMMANDS`); `tree()` draws the screen tree.
-**It is empty until the first walk** — see below.
+The data lives in `_sitemap.js` (`VERIFIED`, `SCREENS`, `TRAPS`, `COMMANDS`); `tree()` draws the screen tree. The
+first walk (2026-09-29, DreamFace 6.34.1 in English, guest account, see `VERIFIED`) recorded 27 screens: home and its
+top bar, the three entry cards (Avatar, AI Video, AI Image), the eight tools, the Live / Agent / Profile tabs and the
+Profile subpages. Most tool screens are H5 pages in `WebViewActivity`. The app declares no deep links to its own
+screens (`https://dreamfaceapp.com/…` opens the website), so `open` taps its way from home.
 
 ```js
 {
