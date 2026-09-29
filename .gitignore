@@ -4,4 +4,4 @@ lib
 .vscode
 coverage
 test-results
-playwright-report
+playwright-reportadapters/node_modules

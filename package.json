@@ -19,10 +19,12 @@
     "test": "c8 playwright test",
     "watch": "tsc --watch",
     "clean": "rm -rf lib",
-    "prepare": "husky"
+    "prepare": "npm run build"
   },
   "files": [
-    "lib"
+    "lib",
+    "adapters/",
+    "adapter-sdk/"
   ],
   "dependencies": {
     "@modelcontextprotocol/express": "2.0.0",
@@ -60,6 +62,17 @@
   "main": "index.js",
   "bin": {
     "mcp-server-mobile": "lib/index.js"
+  },
+  "exports": {
+    "./adapter-sdk": {
+      "types": "./adapter-sdk/index.d.ts",
+      "default": "./adapter-sdk/index.js"
+    },
+    "./package.json": "./package.json",
+    "./lib/*": "./lib/*"
+  },
+  "mobileMcp": {
+    "adapterApi": 1
   },
   "directories": {
     "lib": "lib"

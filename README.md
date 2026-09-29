@@ -114,6 +114,10 @@ How we help to scale mobile automation:
 - **`mobile_get_crash`** - Get the full content of a crash report by its ID
 - **`mobile_batch_commands`** - Run multiple tools in sequence in a single call (e.g. click, type, click), optionally listing screen elements at the end
 
+### App Adapters
+- **`apps_search`** - List apps that have adapters, or find named commands for a task, app or package name (with their typed args)
+- **`app_run`** - Run one app command on a device (e.g. `dreamface-app/sitemap`, `dreamface-app/open`); JSON result, coded errors. See [docs/adapters.md](docs/adapters.md)
+
 ## 🏗️ Mobile MCP Architecture
 
 <p align="center">
@@ -492,6 +496,7 @@ Gmail to contacts "team@example.com".
 | `MOBILEMCP_AUTH` | Require a Bearer token on the Streamable HTTP server (`--listen`) — every request must then send `Authorization: Bearer <token>`. | `MOBILEMCP_AUTH=my-secret-token` |
 | `MOBILEMCP_DISABLE_TELEMETRY` | Disable anonymous usage telemetry. | `MOBILEMCP_DISABLE_TELEMETRY=1` |
 | `MOBILEMCP_ALLOW_UNSAFE_URLS` | Allow `mobile_open_url` to open non-standard URL schemes (blocked by default). | `MOBILEMCP_ALLOW_UNSAFE_URLS=1` |
+| `MOBILE_MCP_ADAPTER_DIRS` | Extra app adapter directories (`:`-separated, `;` on Windows) that override the built-in `adapters/`. See [docs/adapters.md](docs/adapters.md). | `MOBILE_MCP_ADAPTER_DIRS=/path/to/adapters` |
 | `MOBILEMCP_LEGACY_ROBOT` | Use the legacy platform-specific robots for Android devices and physical iOS devices. iOS simulators continue to use `mobilecli`. | `MOBILEMCP_LEGACY_ROBOT=1` |
 
 ### Simulators, Emulators, and Real Devices

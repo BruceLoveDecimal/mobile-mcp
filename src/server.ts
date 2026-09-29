@@ -17,6 +17,11 @@ import { Mobilecli } from "./mobilecli";
 import { MobileDevice } from "./mobile-device";
 import { validateOutputPath, validateFileExtension } from "./utils";
 import { formatElements } from "./format-elements";
+import { AppRegistry } from "./adapters/loader";
+import { adapterApi, defaultSources, prepareSources } from "./adapters/sources";
+import { runCommand } from "./adapters/executor";
+import { DeviceLocks } from "./adapters/device-lock";
+import { Source } from "./adapters/types";
 
 type ScreenshotContent = { type: "text", text: string } | { type: "image", data: string, mimeType: string };
 
@@ -84,9 +89,19 @@ Each call is a device round-trip. Group known sequences (tap, type, tap) into
 mobile_batch_commands instead of issuing them one at a time.
 
 Prefer mobile_open_url or mobile_launch_app over navigating through the UI to
-reach a screen.`;
+reach a screen.
 
-export const createMcpServer = (): McpServer => {
+Some apps have adapters: named commands with typed args (a read-only app map,
+opening a screen, a whole flow). Find them with apps_search and run them with
+app_run instead of repeating the flow tap by tap. Pass args exactly as
+apps_search lists them.`;
+
+export interface McpServerOptions {
+	/** Adapter sources, later overriding earlier. Default: built-in, MOBILE_MCP_ADAPTER_DIRS, ~/.mobile-mcp/adapters. */
+	adapterSources?: Source[];
+}
+
+export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 
 	const server = new McpServer({
 		name: "mobile-mcp",
@@ -119,6 +134,11 @@ export const createMcpServer = (): McpServer => {
 	// ponytail: batch calls tool callbacks directly, bypassing mcp transport
 	const toolCallbacks = new Map<string, { callback: ToolCallback; paramsSchema: ZodSchemaShape }>();
 
+	// calls on one device run one at a time, so an app_run flow is never interleaved with other taps
+	const deviceLocks = new DeviceLocks();
+	const onDevice = <T>(args: any, fn: () => Promise<T>): Promise<T> =>
+		typeof args?.device === "string" ? deviceLocks.run(args.device, fn) : fn();
+
 	const tool = (name: string, title: string, description: string, paramsSchema: ZodSchemaShape, annotations: ToolAnnotations, cb: ToolCallback) => {
 		toolCallbacks.set(name, { callback: cb, paramsSchema });
 		server.registerTool(name, {
@@ -132,7 +152,7 @@ export const createMcpServer = (): McpServer => {
 				trace(`Invoking ${name} with args: ${JSON.stringify(args)}`);
 				const start = +new Date();
 				const telemetry: Record<string, string | number> = {};
-				const response = await cb(args, telemetry);
+				const response = await onDevice(args, () => cb(args, telemetry));
 				const duration = +new Date() - start;
 				trace(`=> ${response}`);
 				posthog("tool_invoked", { "ToolName": name, "Duration": duration, ...telemetry }).then();
@@ -231,6 +251,7 @@ export const createMcpServer = (): McpServer => {
 
 	// cache per device id, saves ~0.2s (mobilecli --version + devices) on every tool call
 	const robotCache = new Map<string, Robot>();
+	const devicePlatforms = new Map<string, "android" | "ios">();
 
 	const getRobotFromDevice = (deviceId: string): Robot => {
 		const cached = robotCache.get(deviceId);
@@ -255,6 +276,7 @@ export const createMcpServer = (): McpServer => {
 			const iosDevices = iosManager.listDevices();
 			const iosDevice = iosDevices.find(d => d.deviceId === deviceId);
 			if (iosDevice) {
+				devicePlatforms.set(deviceId, "ios");
 				return new IosRobot(deviceId);
 			}
 
@@ -263,6 +285,7 @@ export const createMcpServer = (): McpServer => {
 			const androidDevices = androidManager.getConnectedDevices();
 			const androidDevice = androidDevices.find(d => d.deviceId === deviceId);
 			if (androidDevice) {
+				devicePlatforms.set(deviceId, "android");
 				return new AndroidRobot(deviceId);
 			}
 		}
@@ -287,6 +310,7 @@ export const createMcpServer = (): McpServer => {
 						agentVerifiedSimulators.add(deviceId);
 					}
 
+					devicePlatforms.set(deviceId, device.platform);
 					return new MobileDevice(deviceId);
 				}
 			}
@@ -854,7 +878,7 @@ export const createMcpServer = (): McpServer => {
 				openWorldHint: true,
 			},
 		},
-		async ({ device, maxSize, scale }) => {
+		async ({ device, maxSize, scale }) => onDevice({ device }, async () => {
 			try {
 				const robot = getRobotFromDevice(device);
 
@@ -915,7 +939,7 @@ export const createMcpServer = (): McpServer => {
 					isError: true,
 				};
 			}
-		}
+		})
 	);
 
 	tool(
@@ -1210,6 +1234,100 @@ export const createMcpServer = (): McpServer => {
 			}
 
 			return results.join("\n");
+		}
+	);
+
+	// ── app adapters: named, typed commands per app (see docs/adapters.md) ──
+	const adapterSources = options.adapterSources ?? defaultSources();
+	prepareSources(adapterSources, msg => error(`[adapters] ${msg}`));
+	const appRegistry = new AppRegistry(adapterSources, msg => error(`[adapters] ${msg}`));
+	const deviceProvider = {
+		getRobot: (deviceId: string) => getRobotFromDevice(deviceId),
+		platform: async (deviceId: string) => {
+			if (!devicePlatforms.has(deviceId)) {
+				getRobotFromDevice(deviceId);
+			}
+
+			return devicePlatforms.get(deviceId) ?? "unknown";
+		},
+	};
+
+	const jsonResult = (payload: unknown, isError = false) => ({
+		content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+		...(isError && { isError: true }),
+	});
+
+	server.registerTool(
+		"apps_search",
+		{
+			title: "Find App Commands",
+			description: "No query: list apps that have adapters, with their package names and sample commands. With a task, app name or package name as query: find matching commands. Each result lists args[{name,type,required,help,default,choices}] for app_run. Do not invent parameters.",
+			inputSchema: z.object({
+				query: z.string().optional().describe("Task, app name or package name; omit to list apps"),
+				limit: z.number().int().min(1).max(100).default(20),
+			}),
+			annotations: { readOnlyHint: true, openWorldHint: false },
+		},
+		async ({ query, limit }) => {
+			try {
+				posthog("tool_invoked", { "ToolName": "apps_search" }).then();
+				if (query?.trim()) {
+					return jsonResult({ results: await appRegistry.search(query, limit) });
+				}
+
+				return jsonResult({ adapterApi: adapterApi(), apps: (await appRegistry.apps()).slice(0, limit) });
+			} catch (err: any) {
+				return jsonResult({ ok: false, error: { code: "adapter_error", message: err.message } }, true);
+			}
+		}
+	);
+
+	server.registerTool(
+		"app_run",
+		{
+			title: "Run App Command",
+			description: "Run one app adapter command on a device. args must match the args listed by apps_search. Invalid args return invalid_args with details.expected. Commands run directly, including writes (access \"write\" may spend credits). Returns JSON: {rows, nextCursor?} or {value}; failures are errors with {code, message, hint?, details?}.",
+			inputSchema: z.object({
+				device: z.string().describe("The device identifier to use. Use mobile_list_available_devices to find which devices are available to you."),
+				app: z.string().describe("App name from apps_search (or one of its aliases)"),
+				command: z.string().describe("Command name from apps_search"),
+				args: z.record(z.string(), z.unknown()).default({}).describe("Command arguments, as listed by apps_search"),
+			}),
+			annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+		},
+		async ({ device, app, command, args }, ctx: any) => {
+			const req = ctx?.mcpReq ?? {};
+			const token = req._meta?.progressToken;
+			const started = Date.now();
+			let beat: NodeJS.Timeout | undefined;
+			if (token !== undefined && typeof req.notify === "function") {
+				beat = setInterval(() => {
+					const seconds = Math.round((Date.now() - started) / 1000);
+					req.notify({ method: "notifications/progress", params: { progressToken: token, progress: seconds, message: `${app} ${command} running (${seconds}s)` } }).catch(() => {});
+				}, 5000);
+			}
+
+			try {
+				trace(`Invoking app_run ${app}/${command} on ${device} with args: ${JSON.stringify(args)}`);
+				const r = await deviceLocks.run(device, () => runCommand(app, command, args ?? {}, { deviceId: device, provider: deviceProvider, registry: appRegistry, signal: req.signal }));
+				posthog(r.ok ? "tool_invoked" : "tool_failed", { "ToolName": "app_run", "Duration": r.elapsedMs }).then();
+				if (!r.ok) {
+					trace(`=> ${app}/${command} failed: ${r.error.code} ${r.error.message}`);
+					return jsonResult({ ok: false, app: r.app, command: r.command, ...(r.source && { source: r.source }), error: r.error }, true);
+				}
+
+				return jsonResult({
+					app: r.app,
+					command: r.command,
+					source: r.source,
+					elapsedMs: r.elapsedMs,
+					...(r.rows !== undefined ? { rows: r.rows, ...(r.nextCursor && { nextCursor: r.nextCursor }) } : { value: r.value }),
+				});
+			} finally {
+				if (beat) {
+					clearInterval(beat);
+				}
+			}
 		}
 	);
 
