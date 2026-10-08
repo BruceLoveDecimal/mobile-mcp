@@ -22,6 +22,7 @@ import { adapterApi, defaultSources, prepareSources } from "./adapters/sources";
 import { runCommand } from "./adapters/executor";
 import { DeviceLocks } from "./adapters/device-lock";
 import { Source } from "./adapters/types";
+import { NetworkCaptures } from "./network/captures";
 
 type ScreenshotContent = { type: "text", text: string } | { type: "image", data: string, mimeType: string };
 
@@ -94,11 +95,16 @@ reach a screen.
 Some apps have adapters: named commands with typed args (a read-only app map,
 opening a screen, a whole flow). Find them with apps_search and run them with
 app_run instead of repeating the flow tap by tap. Pass args exactly as
-apps_search lists them.`;
+apps_search lists them.
+To see what an app sends and receives, start network_capture on the device
+and read the entries with network_inspect (list, then detail on a seq); stop
+the capture before the device is handed back.`;
 
 export interface McpServerOptions {
 	/** Adapter sources, later overriding earlier. Default: built-in, MOBILE_MCP_ADAPTER_DIRS, ~/.mobile-mcp/adapters. */
 	adapterSources?: Source[];
+	/** Network captures (one proxy per device). Default: adb-controlled, CA under MOBILE_MCP_NETWORK_DIR or ~/.mobile-mcp/network. */
+	networkCaptures?: NetworkCaptures;
 }
 
 export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
@@ -1327,6 +1333,84 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 				if (beat) {
 					clearInterval(beat);
 				}
+			}
+		}
+	);
+
+	// ── network capture: what the device's apps send and receive, aligned with opencli-mcp's network_inspect ──
+
+	const networkCaptures = options.networkCaptures ?? new NetworkCaptures();
+
+	tool(
+		"network_capture",
+		"Capture Network Traffic",
+		"Start, stop or query capturing the HTTP(S) traffic of a device's apps through a proxy on this host. start points the device at the proxy (system proxy; apps that honour it, i.e. most) and returns its port. HTTPS is only tunnelled (host, bytes, timing) unless decryptHttps is true: then TLS is terminated with the capture CA and requests are recorded in full, which only works for apps that trust that CA (the result says where it was installed and what to do); an app that does not trust it fails HTTPS with tls_handshake_failed. stop restores the device's previous proxy. Always stop before the device is handed back.",
+		{
+			device: z.string().describe("The device identifier to use. Use mobile_list_available_devices to find which devices are available to you."),
+			action: z.enum(["start", "stop", "status"]).describe("start a capture (idempotent), stop it and restore the device, or report whether one runs"),
+			decryptHttps: z.boolean().optional().describe("start only: terminate TLS with the capture CA to record HTTPS requests in full. Default false (HTTPS tunnelled, metadata only)."),
+		},
+		{ readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+		async ({ device, action, decryptHttps }) => {
+			if (action === "start") {
+				try {
+					return JSON.stringify({ ok: true, device, ...await networkCaptures.start(device, { decryptHttps }) });
+				} catch (error: any) {
+					throw new ActionableError(`Cannot start network capture on ${device}: ${error.message}`);
+				}
+			}
+
+			if (action === "stop") {
+				const stopped = await networkCaptures.stop(device);
+				return JSON.stringify({ ok: true, device, stopped });
+			}
+
+			return JSON.stringify({ ok: true, device, ...networkCaptures.status(device) });
+		}
+	);
+
+	tool(
+		"network_inspect",
+		"Inspect Captured Requests",
+		"Read what network_capture recorded for a device. list returns compact request summaries, newest last (filter: URL substring; afterSequence: only newer than that seq); detail returns headers and a bounded request or response body for one seq (copy body.nextStart to continue reading); clear drops the recorded entries. A tls entry is an HTTPS connection that was not decrypted: only host, bytes and timing are known.",
+		{
+			device: z.string().describe("The device identifier to use. Use mobile_list_available_devices to find which devices are available to you."),
+			action: z.enum(["list", "detail", "clear"]).default("list"),
+			filter: z.string().optional().describe("URL substring for list"),
+			afterSequence: z.number().int().min(0).optional(),
+			limit: z.number().int().min(1).max(100).default(30),
+			seq: z.number().int().positive().optional().describe("required for detail; copy from list"),
+			part: z.enum(["request", "response"]).default("response"),
+			start: z.number().int().min(0).default(0),
+			maxChars: z.number().int().min(200).max(100_000).default(8_000),
+		},
+		{ readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+		async ({ device, action, filter, afterSequence, limit, seq, part, start, maxChars }) => {
+			try {
+				if (action === "clear") {
+					return JSON.stringify({ ok: true, device, cleared: networkCaptures.clear(device) });
+				}
+
+				if (action === "list") {
+					return JSON.stringify({ ok: true, device, ...networkCaptures.list(device, { filter, afterSequence, limit }) });
+				}
+
+				if (seq === undefined) {
+					throw new ActionableError("detail requires seq. Call network_inspect action:list and copy an entry's seq");
+				}
+
+				const detail = networkCaptures.detail(device, { seq, part, start, maxChars });
+				if (!detail) {
+					throw new ActionableError(`No captured request has seq ${seq}. Call network_inspect action:list and copy an entry's seq`);
+				}
+
+				return JSON.stringify({ ok: true, device, ...detail });
+			} catch (error: any) {
+				if (error instanceof ActionableError) {
+					throw error;
+				}
+
+				throw new ActionableError(error.message);
 			}
 		}
 	);

@@ -39,6 +39,8 @@ const expectedAnnotations: ToolAnnotationMatrix = {
 	mobile_batch_commands: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
 	apps_search: { readOnlyHint: true, openWorldHint: false },
 	app_run: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+	network_capture: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+	network_inspect: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 };
 
 test("describes every tool's side effects and interaction domain", async () => {
