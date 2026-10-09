@@ -13,7 +13,7 @@ interface (`device` + `screen`), because a release app's token and API are out o
 adapters/
   package.json                 { "type": "module" }
   <app>/
-    app.json                   optional: { "aliases": ["DreamFace"], "packages": ["com.dreamapp.dubhe"] }
+    app.json                   optional, see "App manifest" below
     <command>.js               one command per file: export default defineAdapter({...})
     _shared.js                 files starting with _ are shared code, not commands
 ```
@@ -31,7 +31,25 @@ re-imports a file when it changes.
 
 A later source overrides an earlier one for the same `<app>/<command>`; commands it does not override stay available.
 
-**Compatibility.** `package.json` → `mobileMcp.adapterApi` (currently `1`) is the adapter API level; `apps_search`
+### App manifest
+
+`<app>/app.json` tells agents and the application hosting them about the app; `apps_search` without a query returns
+it with the app list. All fields are optional; aliases merge across sources, any other field comes from the latest
+source that sets it:
+
+- `aliases`: names for search; `packages`: package names / bundle ids the commands drive;
+- `account`: the account its `login` role signs in to (default: the app name; a site adapter of opencli-mcp may name
+  the same account, so the web and the app use one login);
+- `roles`: standard roles and the commands implementing them, e.g. `{"login": "login", "map": "sitemap"}`. `login`
+  takes `email`, `password`, `verify_wait_sec`, `timeout_sec` and returns `{account, logged_in_now}`; it fails with
+  `auth_required` or, when a person has to enter an emailed code and `verify_wait_sec` ran out,
+  `verification_required`. `map` returns the app map without touching the device;
+- `guide`: agent-facing usage notes for working on this app.
+
+A command whose descriptor sets `audience: 'host'` is run by the hosting application (a login with credentials the
+agent never sees): `apps_search` leaves it out, `app_run` still runs it.
+
+**Compatibility.** `package.json` → `mobileMcp.adapterApi` (currently `2`) is the adapter API level; `apps_search`
 without a query reports it. It goes up when adapters start depending on new context features. An application that
 syncs adapters only uses adapters whose `adapterApi` is not above the engine's.
 
@@ -61,7 +79,8 @@ export default defineAdapter({
 The contract is `adapter-sdk/index.d.ts`. In short:
 
 - **Descriptor** (`defineAdapter` only validates and returns it): `description` (agent-facing; Chinese keywords help
-  search), `access`, `args`, `result` (`rows` or `value`), `aliases`, `packages` (default: `app.json`), `run`.
+  search), `access`, `args`, `result` (`rows` or `value`), `aliases`, `packages` (default: `app.json`), `audience`
+  (`host` hides it from search), `run`.
 - **Args**: `name` is snake_case; `type` `string | int | number | boolean | array | object`; `required`, `default`,
   `choices`, `min`/`max`, `minLength`/`maxLength`, `nullable`, `items`, `properties`, `help`, `example`.
   Scalar strings are coerced (`"3"` → 3, `"true"` → true); anything else invalid returns `invalid_args` with
@@ -77,6 +96,10 @@ The contract is `adapter-sdk/index.d.ts`. In short:
     `waitFor({ state })`. Actions re-read the screen until the element appears (default 10 s, `{ timeout }` or
     `screen.setDefaultTimeout(ms)`); a miss is `element_not_found` with the texts that were on screen. Raw
     `screen.tap(x, y)`, `swipe(direction)`, `type(text)`, `elements()` are there for the rest.
+    A read takes seconds on an emulator, so a step that decides between several things reads once:
+    `screen.snapshot()` returns `{ ok, elements, texts, size }` with `byText(text, { exact })` / `byTestId(id)` to look
+    elements up in that read and `tap(element)` to tap one where the read found it; an unreadable screen gives
+    `ok: false` instead of throwing.
     Roles are platform-neutral: `button`, `textbox`, `text`, `image`, `switch`, `checkbox`, `radio`, `cell`, else the
     short type name.
   - `expect(locator)`: `toBeVisible()`, `toBeHidden()`, `toHaveText(text | RegExp)`, polling like the locators; a

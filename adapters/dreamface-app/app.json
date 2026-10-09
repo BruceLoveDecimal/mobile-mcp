@@ -1,4 +1,16 @@
 {
-  "aliases": ["DreamFace", "DreamFace App", "dreamface"],
-  "packages": ["com.dreamapp.dubhe"]
+  "aliases": [
+    "DreamFace",
+    "DreamFace App",
+    "dreamface"
+  ],
+  "packages": [
+    "com.dreamapp.dubhe"
+  ],
+  "account": "dreamface",
+  "roles": {
+    "login": "login",
+    "map": "sitemap"
+  },
+  "guide": "- 操作前先 app_run dreamface-app/sitemap 看界面地图：有哪些屏幕、怎么进入、控件和已知的坑；它不动设备。地图里还没有的屏幕再逐步操作。\n- 用 dreamface-app/open 按地图直接进入某个屏幕（会冷启动或重启 App），比一步步点稳定；积分用 dreamface-app/credits 读。\n- 「我的」页（Profile 标签）读不出元素，它下面的入口要按位置点或换别的路径进入（见 sitemap 的 traps）。\n- access 为 write 的命令会改数据或消耗积分，用例没要求时不调用；同一条用例最多调用一次。\n- 服务端状态（积分、作品）可以用网页的 dreamface 站点命令在同一账号上核对。"
 }

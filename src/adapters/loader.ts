@@ -2,7 +2,7 @@
 // `export default defineAdapter({ description, access, args, run })`. Identity is the PATH; the module is the
 // definition. There is no manifest and no global registry: the registry lists by `readdir`, imports on demand, and keeps
 // a small in-memory index (rebuilt when a file changes) for search. `_`-prefixed files are shared code, not commands.
-// Optional `<app>/app.json` holds `{ aliases, packages }`.
+// Optional `<app>/app.json` holds `{ aliases, packages, account, roles, guide }` (adapter-sdk AppManifest).
 //
 // Sources are an ordered list; a later source overrides an earlier one for the same `<app>/<command>`, so the built-in
 // corpus, managed dirs and the user's `~/.mobile-mcp/adapters` are one mechanism. Mirrors opencli-mcp's SiteRegistry.
@@ -18,12 +18,13 @@ import { AdapterCommand, Arg, CommandMeta, ResultShape, Source, SourceKind } fro
 export interface AppMetadata {
 	aliases: string[];
 	packages: string[];
+	account: string;
+	roles: Record<string, string>;
+	guide?: string;
 }
 
-export interface AppSummary {
+export interface AppSummary extends AppMetadata {
 	app: string;
-	aliases: string[];
-	packages: string[];
 	commands: number;
 	read: number;
 	write: number;
@@ -154,26 +155,43 @@ export class AppRegistry {
 		return out;
 	}
 
-	/** app.json across sources: aliases merge, the latest source that names packages wins. */
+	/** app.json across sources: aliases merge, any other field the latest source that sets it wins. */
 	appMetadata(app: string): AppMetadata {
 		const aliases = new Set<string>();
-		let packages: string[] = [];
+		const out: AppMetadata = { aliases: [], packages: [], account: app, roles: {} };
 		for (const source of this.existingSources()) {
+			let metadata: Record<string, unknown>;
 			try {
-				const metadata = JSON.parse(fs.readFileSync(path.join(source.dir, app, "app.json"), "utf8"));
-				for (const alias of strings(metadata.aliases)) {
-					aliases.add(alias);
-				}
-
-				if (strings(metadata.packages).length) {
-					packages = strings(metadata.packages);
-				}
+				metadata = JSON.parse(fs.readFileSync(path.join(source.dir, app, "app.json"), "utf8"));
 			} catch {
-				// optional app metadata
+				continue; // optional app metadata
+			}
+
+			for (const alias of strings(metadata.aliases)) {
+				aliases.add(alias);
+			}
+
+			if (strings(metadata.packages).length) {
+				out.packages = strings(metadata.packages);
+			}
+
+			if (typeof metadata.account === "string" && metadata.account.trim()) {
+				out.account = metadata.account.trim();
+			}
+
+			if (metadata.roles && typeof metadata.roles === "object") {
+				out.roles = Object.fromEntries(Object.entries(metadata.roles as Record<string, unknown>)
+					.filter(([, cmd]) => typeof cmd === "string" && cmd.trim())
+					.map(([role, cmd]) => [role, (cmd as string).trim()]));
+			}
+
+			if (typeof metadata.guide === "string" && metadata.guide.trim()) {
+				out.guide = metadata.guide.trim();
 			}
 		}
 
-		return { aliases: [...aliases], packages };
+		out.aliases = [...aliases];
+		return out;
 	}
 
 	private kindOf(file: string): SourceKind {
@@ -209,6 +227,7 @@ export class AppRegistry {
 			result: d.result as ResultShape | undefined,
 			args: (d.args as Arg[]) ?? [],
 			aliases: strings(d.aliases),
+			audience: d.audience === "host" ? "host" : "agent",
 			run: d.run as AdapterCommand["run"],
 		};
 	}
@@ -247,15 +266,16 @@ export class AppRegistry {
 		return [...this.map().entries()].map(([app, cmds]) => {
 			const metas = idx.filter(c => c.app === app);
 			const meta = this.appMetadata(app);
+			const hidden = new Set(metas.filter(c => c.audience === "host").map(c => c.name));
 			return {
 				app,
-				aliases: meta.aliases,
+				...meta,
 				packages: meta.packages.length ? meta.packages : [...new Set(metas.flatMap(c => c.packages))],
 				commands: cmds.size,
 				read: metas.filter(c => c.access === "read").length,
 				write: metas.filter(c => c.access === "write").length,
 				source: metas[0]?.source ?? "builtin",
-				sample: [...cmds.keys()].sort().slice(0, 6),
+				sample: [...cmds.keys()].filter(name => !hidden.has(name)).sort().slice(0, 6),
 			};
 		}).sort((a, b) => a.app.localeCompare(b.app));
 	}
@@ -276,6 +296,10 @@ export class AppRegistry {
 		const hits: SearchHit[] = [];
 		const metadata = new Map<string, AppMetadata>();
 		for (const c of await this.buildIndex()) {
+			if (c.audience === "host") {
+				continue;
+			}
+
 			if (!metadata.has(c.app)) {
 				metadata.set(c.app, this.appMetadata(c.app));
 			}

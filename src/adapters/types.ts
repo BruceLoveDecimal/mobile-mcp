@@ -57,6 +57,8 @@ export interface AdapterCommand {
 	result?: ResultShape;
 	args: Arg[];
 	aliases?: string[];
+	/** `host` commands are left out of search: the hosting application runs them, agents do not see them. */
+	audience: "agent" | "host";
 	source: SourceKind;
 	file: string;
 	run: (ctx: AdapterContext) => Promise<unknown>;

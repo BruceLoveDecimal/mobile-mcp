@@ -134,6 +134,7 @@ test("defineAdapter validates the descriptor and returns it unchanged", async ()
 	expect(() => sdk.defineAdapter({ ...ok, args: [{ name: "badName" }] })).toThrow(/snake_case/);
 	expect(() => sdk.defineAdapter({ ...ok, result: { kind: "value", description: "v", paginated: true } })).toThrow(/paginated/);
 	expect(() => sdk.defineAdapter({ ...ok, packages: [""] })).toThrow(/packages/);
+	expect(() => sdk.defineAdapter({ ...ok, audience: "everyone" })).toThrow(/audience/);
 	expect(sdk.errors.notInstalled().code).toBe("app_not_installed");
 	expect(new sdk.AdapterError("x", "m", "h")).toMatchObject({ code: "x", message: "m", hint: "h" });
 });
@@ -297,6 +298,40 @@ test("a UI command taps, types and asserts through the robot; siblings run throu
 	expect(missing).toMatchObject({ ok: false, error: { code: "element_not_found", details: { locator: "text=\"Nowhere\"" } } });
 });
 
+test("app.json declares roles, account and guide; host commands stay out of search; a snapshot reads once", async () => {
+	const builtin = managedSource({
+		"shop/app.json": JSON.stringify({ aliases: ["Shop"], packages: ["com.example.demo"], roles: { login: "login" }, guide: "old guide" }),
+		"shop/orders.js": adapter(`{ description: "list the orders", access: "read", async run() { return { rows: [] }; } }`),
+		"shop/peek.js": adapter(`{ description: "peek", access: "read", async run({ screen }) { const snap = await screen.snapshot(); return { ok: snap.ok, elements: snap.elements.length }; } }`),
+		"shop/login.js": adapter(`{ description: "log in to the shop", access: "write", audience: "host",
+			async run({ screen }) {
+				const snap = await screen.snapshot();
+				await snap.tap(snap.byText("Go", { exact: true }));
+				return { ok: snap.ok, texts: snap.texts, id: snap.byTestId("go_btn")?.text, size: snap.size, fuzzy: snap.byText("go")?.text };
+			},
+		}`),
+	});
+	const managed = managedSource({ "shop/app.json": JSON.stringify({ aliases: ["商店"], account: "shared", guide: "new guide" }) });
+	const registry = new AppRegistry([{ dir: builtin, kind: "builtin" }, { dir: managed, kind: "managed" }]);
+
+	const [shop] = await registry.apps();
+	expect(shop).toMatchObject({ app: "shop", aliases: ["Shop", "商店"], packages: ["com.example.demo"], account: "shared", roles: { login: "login" }, guide: "new guide", sample: ["orders", "peek"] });
+	// agents do not find the login, the host still runs it
+	expect((await registry.search("shop login")).map(hit => hit.name)).not.toContain("login");
+
+	const robot = new FakeRobot();
+	robot.screen = [el("android.widget.TextView", "Title", [0, 0, 400, 50]), el("android.widget.Button", "Go", [100, 700, 200, 60], { identifier: "com.example.demo:id/go_btn" })];
+	const r = await runCommand("shop", "login", {}, runOptions(registry, robot));
+	expect(r).toMatchObject({ ok: true, value: { ok: true, texts: ["Title", "Go"], id: "Go", size: { width: 400, height: 760 }, fuzzy: "Go" } });
+	expect(robot.taps).toEqual(["Go"]);
+
+	// an unreadable screen gives ok=false instead of throwing
+	robot.getElementsOnScreen = async () => {
+		throw new Error("no XML content found in uiautomator dump");
+	};
+	expect(await runCommand("shop", "peek", {}, runOptions(registry, robot))).toMatchObject({ ok: true, value: { ok: false, elements: 0 } });
+});
+
 test("app_not_installed when none of the app's packages is on the device", async () => {
 	const dir = managedSource({
 		"other/app.json": JSON.stringify({ packages: ["com.example.other"] }),
@@ -416,7 +451,7 @@ test("apps_search lists apps and finds commands; app_run returns JSON and isErro
 	expect(tools).toEqual(expect.arrayContaining(["apps_search", "app_run"]));
 
 	const list = await callJson(client, "apps_search", {});
-	expect(list.body.adapterApi).toBe(1);
+	expect(list.body.adapterApi).toBe(2);
 	expect(list.body.apps).toEqual([expect.objectContaining({ app: "dreamface-app", packages: ["com.dreamapp.dubhe"] })]);
 
 	const found = await callJson(client, "apps_search", { query: "dreamface sitemap" });

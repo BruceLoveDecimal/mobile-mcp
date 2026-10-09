@@ -1,6 +1,7 @@
 // @mobilenext/mobile-mcp/adapter-sdk — the app adapter contract (runtime). Pure: validate + return a descriptor, never register.
 
 const ACCESS = new Set(['read', 'write']);
+const AUDIENCE = new Set(['agent', 'host']);
 
 /** Validate an adapter descriptor and return it unchanged. No global state, no side effects. */
 export function defineAdapter(descriptor) {
@@ -8,6 +9,7 @@ export function defineAdapter(descriptor) {
   if (typeof d.description !== 'string' || !d.description.trim()) throw new Error('adapter: `description` (non-empty string) is required');
   if (!ACCESS.has(d.access)) throw new Error("adapter: `access` must be 'read' or 'write'");
   if (typeof d.run !== 'function') throw new Error('adapter: `run` must be a function (ctx) => data');
+  if (d.audience !== undefined && !AUDIENCE.has(d.audience)) throw new Error("adapter: `audience` must be 'agent' or 'host'");
   if (d.result !== undefined && (!['rows', 'value'].includes(d.result?.kind) || typeof d.result?.description !== 'string' || !d.result.description.trim() || d.result.fields !== undefined && (!d.result.fields || typeof d.result.fields !== 'object' || Object.values(d.result.fields).some((v) => typeof v !== 'string')) || d.result.paginated && d.result.kind !== 'rows')) throw new Error('adapter: `result` needs kind rows|value and a description; fields must be text and paginated applies to rows');
   if (d.packages !== undefined && (!Array.isArray(d.packages) || d.packages.some((p) => typeof p !== 'string' || !p.trim()))) throw new Error('adapter: `packages` must be a list of package names / bundle ids');
   if (d.args !== undefined) {

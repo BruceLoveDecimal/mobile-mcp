@@ -89,6 +89,10 @@ const visible = (e: ScreenElement): boolean => e.rect.width > 0 && e.rect.height
 /** Text an agent would read off the element. */
 export const elementText = (e: ScreenElement): string => e.text || e.label || e.value || e.name || "";
 
+/** A resource id (Android, with or without the package) or an accessibility identifier (iOS). */
+const idMatches = (e: ScreenElement, id: string): boolean =>
+	Boolean(e.identifier) && (e.identifier === id || e.identifier!.endsWith(`:id/${id}`) || e.identifier!.endsWith(`/${id}`));
+
 /** Shared state of one screen: the robot, the default wait and cancellation. */
 export class ScreenDriver {
 	defaultTimeout = DEFAULT_WAIT_MS;
@@ -170,7 +174,7 @@ export class Locator {
 		return this.with({
 			kind: "filter",
 			describe: `testid=${id}`,
-			test: e => Boolean(e.identifier) && (e.identifier === id || e.identifier!.endsWith(`:id/${id}`) || e.identifier!.endsWith(`/${id}`)),
+			test: e => idMatches(e, id),
 		});
 	}
 
@@ -265,6 +269,46 @@ export class Locator {
 }
 
 /** The entry point: locators start here; raw taps, swipes and typing act on the whole screen. */
+/**
+ * One read of the screen. Reading takes seconds on an emulator, so a flow that makes several decisions per step reads
+ * once, looks elements up in that read and taps them where that read found them, instead of re-reading per locator.
+ * `ok` is false when the screen could not be read (some screens make the accessibility dump fail).
+ */
+export class ScreenSnapshot {
+	readonly texts: string[];
+
+	constructor(private screen: Screen, readonly ok: boolean, readonly elements: ScreenElement[]) {
+		this.texts = elements.map(elementText).filter(Boolean);
+	}
+
+	/** The screen size, from the elements that cover it (0 when nothing was read). */
+	get size(): { width: number; height: number } {
+		let width = 0;
+		let height = 0;
+		for (const e of this.elements) {
+			width = Math.max(width, e.rect.x + e.rect.width);
+			height = Math.max(height, e.rect.y + e.rect.height);
+		}
+
+		return { width, height };
+	}
+
+	/** The first element whose text, label or name matches, like getByText. */
+	byText(text: Pattern, opts: TextOptions = {}): ScreenElement | undefined {
+		return this.elements.find(e => anyMatches([e.text, e.label, e.name], text, opts.exact));
+	}
+
+	/** The first element with this resource id / accessibility identifier, like getByTestId. */
+	byTestId(id: string): ScreenElement | undefined {
+		return this.elements.find(e => idMatches(e, id));
+	}
+
+	/** Tap the middle of an element of this read. */
+	async tap(element: ScreenElement): Promise<void> {
+		await this.screen.tap(Math.round(element.rect.x + element.rect.width / 2), Math.round(element.rect.y + element.rect.height / 2));
+	}
+}
+
 export class Screen {
 	private root: Locator;
 
@@ -294,6 +338,19 @@ export class Screen {
 
 	elements(): Promise<ScreenElement[]> {
 		return this.screenDriver.elements();
+	}
+
+	/** One read of the screen to look elements up in (see ScreenSnapshot); an unreadable screen gives ok=false. */
+	async snapshot(): Promise<ScreenSnapshot> {
+		try {
+			return new ScreenSnapshot(this, true, await this.screenDriver.elements());
+		} catch (err: any) {
+			if (err?.code === "cancelled") {
+				throw err;
+			}
+
+			return new ScreenSnapshot(this, false, []);
+		}
 	}
 
 	async tap(x: number, y: number): Promise<void> {

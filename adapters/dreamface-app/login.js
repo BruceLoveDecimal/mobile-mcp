@@ -7,7 +7,7 @@
 // A verification code ("Enter the code that was sent to ...") is never handled here: the command waits up to
 // `verify_wait_sec` for a person to enter it on the device, and fails with `verification_required` otherwise.
 import { AdapterError, defineAdapter, errors } from '@mobilenext/mobile-mcp/adapter-sdk';
-import { logOut, openSettings, readAccount, readScreen, sameEmail, sleep, tapAt } from './_login.js';
+import { isGuest, logOut, openSettings, readAccount, sameEmail, sleep } from './_login.js';
 
 /** How long the app may stay on the password page after it was filled before that counts as a refusal. */
 const PASSWORD_PAGE_GRACE_MS = 30_000;
@@ -16,6 +16,8 @@ const FAILURE = /Incorrect password|Log in failed|has been suspended/i;
 export default defineAdapter({
   description: 'Log the DreamFace app in to an email account (logging out another one first). A verification code, if the app asks for one, has to be entered by a person on the device. （登录 账号）',
   access: 'write',
+  // run by the application hosting the agent, with credentials the agent never sees: not listed in apps_search
+  audience: 'host',
   args: [
     { name: 'email', type: 'string', required: true, help: 'Account email' },
     { name: 'password', type: 'string', required: true, help: 'Account password' },
@@ -32,17 +34,17 @@ export default defineAdapter({
     await device.restart(pkg);
 
     let settings = await openSettings(ctx, 120_000);
-    if (!settings.byText('Log in')) {
+    if (!isGuest(settings)) {
       // Signed in already: the Account page names the account.
       const account = await readAccount(ctx, settings);
       if (account.email && sameEmail(account.email, email)) return { account: email, logged_in_now: false, package: pkg };
       await logOut(ctx, account);
       await sleep(2000);
       settings = await openSettings(ctx, 90_000);
-      if (!settings.byText('Log in')) throw errors.expectation('the app is still signed in after "Log out"');
+      if (!isGuest(settings)) throw errors.expectation('the app is still signed in after "Log out"');
     }
 
-    await tapAt(screen, settings.byId('menuLogin'));
+    await settings.tap(settings.byTestId('menuLogin'));
     await screen.getByText('Continue with Email').tap({ timeout: 20_000 });
     await screen.getByTestId('et_email').fill(email, { timeout: 20_000 });
     await screen.getByTestId('btn_continue').tap();
@@ -50,11 +52,11 @@ export default defineAdapter({
     let filledAt = null;
     let codeSince = null;
     while (Date.now() < deadline) {
-      const read = await readScreen(screen);
-      const failure = read.texts.find((t) => FAILURE.test(t));
+      const snap = await screen.snapshot();
+      const failure = snap.texts.find((t) => FAILURE.test(t));
       if (failure) throw errors.auth(`DreamFace app login failed: ${failure}`, 'Check the account email and password.');
 
-      if (read.texts.some((t) => /Enter the code that was sent to/i.test(t))) {
+      if (snap.texts.some((t) => /Enter the code that was sent to/i.test(t))) {
         codeSince ??= Date.now();
         if (Date.now() - codeSince >= args.verify_wait_sec * 1000) {
           throw new AdapterError(
@@ -67,7 +69,7 @@ export default defineAdapter({
         continue;
       }
 
-      const password = read.byId('et_pwd');
+      const password = snap.byTestId('et_pwd');
       if (password && filledAt === null) {
         await screen.getByTestId('et_pwd').fill(String(args.password));
         await screen.getByTestId('btn_continue').tap();
@@ -79,11 +81,11 @@ export default defineAdapter({
         throw errors.auth('DreamFace app login failed: the app stayed on the password page', 'Check the account email and password.');
       }
 
-      const onLoginScreens = password || read.byId('et_email') || read.byText('Continue with Email');
-      if (filledAt !== null && read.ok && !onLoginScreens) {
+      const onLoginScreens = password || snap.byTestId('et_email') || snap.byText('Continue with Email', { exact: true });
+      if (filledAt !== null && snap.ok && !onLoginScreens) {
         // The login screens are gone: confirm which account the app is signed in to.
         settings = await openSettings(ctx, 90_000);
-        if (settings.byText('Log in')) throw errors.expectation('the login screens closed but the app is still a guest');
+        if (isGuest(settings)) throw errors.expectation('the login screens closed but the app is still a guest');
         const account = await readAccount(ctx, settings);
         if (account.email && sameEmail(account.email, email)) return { account: email, logged_in_now: true, package: pkg };
         throw errors.expectation(`the app is signed in to ${account.email ?? 'another account'}, not ${email}`);

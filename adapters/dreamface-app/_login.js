@@ -1,40 +1,18 @@
-// Screen reading and navigation for the DreamFace app's `login` command. Files starting with `_` are not commands.
+// Navigation for the DreamFace app's `login` command. Files starting with `_` are not commands.
 //
-// Reading the screen is slow (several seconds a read on an emulator), so every decision is made from one read per
-// round, and taps use the position of the element in that read instead of looking it up again.
+// Reading the screen takes seconds on an emulator, so every step reads once (`screen.snapshot()`), decides from that
+// read and taps where it found things.
 import { errors } from '@mobilenext/mobile-mcp/adapter-sdk';
-import { screenSize, textOf } from './_read.js';
 
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/;
 export const sameEmail = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
-
-/**
- * One read of the screen. `ok` is false when the screen could not be read (the Profile tab cannot, see TRAPS
- * profile-unreadable); `byId` / `byText` find an element of this read by resource id or exact visible text.
- */
-export async function readScreen(screen) {
-  let els = [];
-  let ok = true;
-  try { els = await screen.elements(); } catch { ok = false; }
-  return {
-    ok,
-    texts: els.map(textOf).filter(Boolean),
-    byId: (id) => els.find((e) => e.identifier && (e.identifier === id || e.identifier.endsWith(`/${id}`))),
-    byText: (text) => els.find((e) => textOf(e) === text),
-    size: () => screenSize(els),
-  };
-}
-
-/** Tap the middle of an element of an earlier read. */
-export async function tapAt(screen, element) {
-  await screen.tap(Math.round(element.rect.x + element.rect.width / 2), Math.round(element.rect.y + element.rect.height / 2));
-}
+const exact = { exact: true };
 
 /**
  * Settings, from wherever the app starts: close the launch paywall, then Profile → gear (the Profile tab cannot be
  * read, so the gear is tapped by position, top right). Promotion dialogs are web views without an accessible close
- * button; back closes them. Returns the read of the Settings screen: its Account row says "Log in" for a guest and
+ * button; back closes them. Returns the snapshot of the Settings screen: its Account row says "Log in" for a guest and
  * shows the nickname once signed in.
  */
 export async function openSettings({ device, screen }, waitMs) {
@@ -51,15 +29,15 @@ export async function openSettings({ device, screen }, waitMs) {
       await sleep(1500);
       continue;
     }
-    const read = await readScreen(screen);
-    if (read.byText('Function Setting')) return read;
-    const close = read.byId('ivClose');
-    const profile = read.byText('Profile');
+    const snap = await screen.snapshot();
+    if (snap.byText('Function Setting', exact)) return snap;
+    const close = snap.byTestId('ivClose');
+    const profile = snap.byText('Profile', exact);
     if (close) {
-      await tapAt(screen, close); // the subscription page opened on launch
+      await snap.tap(close); // the subscription page opened on launch
     } else if (profile && profileTaps < 2) {
-      const { width, height } = read.size();
-      await tapAt(screen, profile);
+      const { width, height } = snap.size;
+      await snap.tap(profile);
       await sleep(2500);
       await screen.tap(Math.round(width * 0.935), Math.round(height * 0.0525));
       await sleep(2000);
@@ -74,17 +52,20 @@ export async function openSettings({ device, screen }, waitMs) {
   throw errors.expectation('could not reach Settings (Profile → gear)', 'The launch screens may have changed; see dreamface-app/sitemap.');
 }
 
-/** Open the Account page from Settings while signed in; returns its read and the account's email shown there. */
+/** Whether the Settings snapshot is a guest's: its Account row reads "Log in". */
+export const isGuest = (settings) => Boolean(settings.byText('Log in', exact));
+
+/** Open the Account page from Settings while signed in; returns its snapshot and the account's email shown there. */
 export async function readAccount({ screen }, settings, waitMs = 30_000) {
-  const row = settings.byId('menuLogin');
+  const row = settings.byTestId('menuLogin');
   if (!row) throw errors.expectation('the Account row (menuLogin) is not on the Settings screen');
-  await tapAt(screen, row);
+  await settings.tap(row);
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
-    const read = await readScreen(screen);
-    if (read.byId('menuLogout')) {
-      const email = read.texts.map((t) => EMAIL.exec(t)?.[0]).find(Boolean) ?? null;
-      return { read, email };
+    const snap = await screen.snapshot();
+    if (snap.byTestId('menuLogout')) {
+      const email = snap.texts.map((t) => EMAIL.exec(t)?.[0]).find(Boolean) ?? null;
+      return { snap, email };
     }
     await sleep(1000);
   }
@@ -93,13 +74,13 @@ export async function readAccount({ screen }, settings, waitMs = 30_000) {
 
 /** Log out from the Account page: "Log out" asks "Log out your account?", whose bottom button confirms. */
 export async function logOut({ screen }, account, waitMs = 30_000) {
-  await tapAt(screen, account.read.byId('menuLogout'));
+  await account.snap.tap(account.snap.byTestId('menuLogout'));
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
-    const read = await readScreen(screen);
-    const confirm = read.byId('tv_bottom');
-    if (confirm && read.byText('Log out your account?')) {
-      await tapAt(screen, confirm);
+    const snap = await screen.snapshot();
+    const confirm = snap.byTestId('tv_bottom');
+    if (confirm && snap.byText('Log out your account?', exact)) {
+      await snap.tap(confirm);
       return;
     }
     await sleep(1000);

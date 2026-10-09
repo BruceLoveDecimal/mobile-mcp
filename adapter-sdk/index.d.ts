@@ -95,12 +95,28 @@ export interface Screen {
   getByTestId(id: string): Locator;
   /** The raw element list (one fresh read). */
   elements(): Promise<ScreenElement[]>;
+  /** One read to look several elements up in and tap where it found them (a read takes seconds on an emulator).
+   * An unreadable screen gives `ok: false` and no elements instead of throwing. adapterApi 2. */
+  snapshot(): Promise<ScreenSnapshot>;
   tap(x: number, y: number): Promise<void>;
   swipe(direction: SwipeDirection, opts?: { from?: { x: number; y: number }; distance?: number }): Promise<void>;
   /** Type into whatever has focus. */
   type(text: string): Promise<void>;
   /** Default wait for locators, ms. */
   setDefaultTimeout(ms: number): void;
+}
+
+export interface ScreenSnapshot {
+  readonly ok: boolean;
+  readonly elements: ScreenElement[];
+  /** Visible texts in screen order. */
+  readonly texts: string[];
+  readonly size: { width: number; height: number };
+  /** Matches like getByText / getByTestId, within this read. */
+  byText(text: string | RegExp, opts?: TextOptions): ScreenElement | undefined;
+  byTestId(id: string): ScreenElement | undefined;
+  /** Tap the middle of an element of this read. */
+  tap(element: ScreenElement): Promise<void>;
 }
 
 export interface Expectation {
@@ -161,7 +177,22 @@ export interface AdapterDescriptor {
   args?: Arg[];
   /** aliases resolve to this command */
   aliases?: string[];
+  /** `host`: run by the application hosting the agent (e.g. a login with credentials the agent never sees); left out of
+   * `apps_search`, still runnable with `app_run`. Default `agent`. adapterApi 2. */
+  audience?: "agent" | "host";
   run(ctx: AdapterContext): Promise<unknown>;
+}
+
+/** `<app>/app.json`: what the host needs to know about an app (all fields optional). */
+export interface AppManifest {
+  aliases?: string[];
+  packages?: string[];
+  /** The account its `login` role signs in to; defaults to the app name (a site adapter may share it). adapterApi 2. */
+  account?: string;
+  /** Standard roles and the commands that implement them, e.g. { login: 'login', map: 'sitemap' }. adapterApi 2. */
+  roles?: Record<string, string>;
+  /** Agent-facing usage notes, given to agents working on this app. adapterApi 2. */
+  guide?: string;
 }
 
 /** Validate + return an adapter descriptor. Pure: no registration, no side effects. */
