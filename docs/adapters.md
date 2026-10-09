@@ -113,5 +113,5 @@ details? } }`. Codes besides the adapter's own: `invalid_args`, `unknown_app`, `
 ## Built-in apps
 
 - [`dreamface-app`](../adapters/dreamface-app/README.md): `sitemap` (the app map, read-only, never touches the device),
-  `open {screen}` (navigate by the map), `credits` and `image-models` (read on screen, the app-side counterparts of the
+  `open {screen}` (navigate by the map), `login {email, password}` (sign the app in to an email account), `credits` and `image-models` (read on screen, the app-side counterparts of the
   web `dreamface/credits` and `dreamface/image-models`). The map comes from a depth-first walk on a device.

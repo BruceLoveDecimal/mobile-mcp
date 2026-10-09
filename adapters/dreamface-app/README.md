@@ -9,8 +9,13 @@ with the web commands on the same account; `COMMANDS` in `_sitemap.js` says whic
   map; never submits), `credits` (total / purchased / weekly credits from Purchase Credits, reached through the AI
   Video header, and the free agent uses from the Agent tab — the web `dreamface/credits`), `image-models` (the AI Image
   models in the composer's row, first is the default — the web `dreamface/image-models`).
-- **Write**: none yet. A write command (a generation flow) is marked `access: 'write'`, spends credits or a free use and
-  is run at most once per test case.
+- **Login**: `login {email, password}` signs the app in to that email account through Settings → "Log in" → "Continue
+  with Email" (the app's token is its own, separate from the web session), logging out another account first; already
+  signed in to the same email, it returns without touching the form. The gear on the Profile tab is tapped by position
+  (the tab cannot be read). A verification code is never entered by the command: with `verify_wait_sec` it waits for a
+  person to enter it on the device, without it fails with `verification_required`.
+- **Write**: none besides `login` yet. A write command (a generation flow) is marked `access: 'write'`, spends credits
+  or a free use and is run at most once per test case.
 
 Commands of the web adapter that have no app command yet, and why: `works` / `whoami` (the Profile tab cannot be read,
 see the map's TRAPS `profile-unreadable`), `avatars` / `voices` (the samples are images without text), a video model

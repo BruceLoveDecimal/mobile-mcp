@@ -335,12 +335,35 @@ export const SCREENS = [
     parent: 'profile',
     via: 'the gear icon on Profile',
     sections: [
-      '"Account": "Log in" while the app runs as a guest',
+      '"Account": "Log in" while the app runs as a guest (→ login); signed in: "Logged in with Email" / "Logged in with Google", and "Log out" (asks "Log out your account?")',
       '"Social": "Share DreamFace App", "Discord"',
       '"Function Setting": "Remove watermark", "Remove AI Watermark", "Clear cache" (size), "Apply Coupon", "Use third-party AI models" (On), "Privacy Permissions Settings"',
       '"Contact Us": "Email"',
     ],
     controls: ['all of these change settings or the account: read only'],
+  },
+  {
+    id: 'login',
+    activity: 'com.dreamapp.dubhe/com.myhexin.reface.biz.login.AccountLoginActivity',
+    markers: ['Welcome to Dreamface', 'Continue with Email'],
+    parent: 'settings',
+    via: '"Log in" under Account in Settings (a guest only)',
+    sections: ['"Welcome to Dreamface" "log in to continue"', '"Continue with Google", "Continue with Email" (→ login-email)', 'close ×'],
+    controls: ['dreamface-app/login drives the email login; do not sign in by hand during a test'],
+  },
+  {
+    id: 'login-email',
+    activity: 'com.dreamapp.dubhe/com.myhexin.reface.biz.login.AccountBindActivity',
+    markers: ['Your Email', 'Continue'],
+    parent: 'login',
+    via: '"Continue with Email"',
+    sections: [
+      'email field (et_email, hint "Your Email"), "Continue" (btn_continue); an email without an account goes on to sign-up',
+      'then the password field (et_pwd) and the same button; "Incorrect password" on a wrong one',
+      'a code step "Enter the code that was sent to …" for a new account or a check (entered by a person)',
+      '"Forgot password?"',
+    ],
+    controls: ['"Continue" with an unknown email starts creating an account: only dreamface-app/login uses this screen'],
   },
   {
     id: 'homepage',
@@ -428,6 +451,7 @@ export const TRAPS = [
 /** Which command covers which screen, and where the server-side check lives (the web adapter, same account). */
 export const COMMANDS = [
   { command: 'dreamface-app/sitemap', screens: [], screen: '(none: reads this file)', note: 'read' },
+  { command: 'dreamface-app/login', screens: ['settings', 'login', 'login-email'], screen: 'Settings → Log in → Continue with Email', note: 'write: signs the app in to an email account (logs out another); a verification code is entered by a person' },
   { command: 'dreamface-app/open', screens: SCREENS.filter((s) => s.open).map((s) => s.id), screen: 'any screen with `open` taps', note: 'read: launches the app and navigates, never submits' },
   { command: 'dreamface-app/credits', screens: ['credits', 'agent'], screen: 'Purchase Credits (via the AI Video header) and the agent composer', note: 'read: total / purchased / weekly credits and free agent uses, as dreamface/credits reads them on the web' },
   { command: 'dreamface-app/image-models', screens: ['image-composer'], screen: 'AI Image Generator composer', note: 'read: the model row, as dreamface/image-models lists them on the web' },
