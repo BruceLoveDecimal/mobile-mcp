@@ -335,12 +335,25 @@ export const SCREENS = [
     parent: 'profile',
     via: 'the gear icon on Profile',
     sections: [
-      '"Account": "Log in" while the app runs as a guest (→ login); signed in: "Logged in with Email" / "Logged in with Google", and "Log out" (asks "Log out your account?")',
+      '"Account" row (id menuLogin): "Log in" while the app runs as a guest (→ login); signed in it shows the nickname (→ account)',
       '"Social": "Share DreamFace App", "Discord"',
       '"Function Setting": "Remove watermark", "Remove AI Watermark", "Clear cache" (size), "Apply Coupon", "Use third-party AI models" (On), "Privacy Permissions Settings"',
       '"Contact Us": "Email"',
     ],
     controls: ['all of these change settings or the account: read only'],
+  },
+  {
+    id: 'account',
+    activity: 'com.dreamapp.dubhe/com.myhexin.reface.biz.login.AccountActivity',
+    markers: ['Account', 'Log out'],
+    parent: 'settings',
+    via: 'the Account row (nickname) in Settings while signed in',
+    sections: [
+      'the signed-in email on top, then "Headshot", "Nickname", "Biography"',
+      '"Log out" (id menuLogout) asks "Log out your account?" with "Cancel" (tv_top) and "Log out" (tv_bottom)',
+      '"Delete account"',
+    ],
+    controls: ['"Log out" and "Delete account" change the account: only dreamface-app/login uses them, and never "Delete account"'],
   },
   {
     id: 'login',
@@ -451,7 +464,7 @@ export const TRAPS = [
 /** Which command covers which screen, and where the server-side check lives (the web adapter, same account). */
 export const COMMANDS = [
   { command: 'dreamface-app/sitemap', screens: [], screen: '(none: reads this file)', note: 'read' },
-  { command: 'dreamface-app/login', screens: ['settings', 'login', 'login-email'], screen: 'Settings → Log in → Continue with Email', note: 'write: signs the app in to an email account (logs out another); a verification code is entered by a person' },
+  { command: 'dreamface-app/login', screens: ['settings', 'account', 'login', 'login-email'], screen: 'Settings → Log in → Continue with Email (signed in: Settings → Account → Log out first)', note: 'write: signs the app in to an email account (logs out another); a verification code is entered by a person' },
   { command: 'dreamface-app/open', screens: SCREENS.filter((s) => s.open).map((s) => s.id), screen: 'any screen with `open` taps', note: 'read: launches the app and navigates, never submits' },
   { command: 'dreamface-app/credits', screens: ['credits', 'agent'], screen: 'Purchase Credits (via the AI Video header) and the agent composer', note: 'read: total / purchased / weekly credits and free agent uses, as dreamface/credits reads them on the web' },
   { command: 'dreamface-app/image-models', screens: ['image-composer'], screen: 'AI Image Generator composer', note: 'read: the model row, as dreamface/image-models lists them on the web' },

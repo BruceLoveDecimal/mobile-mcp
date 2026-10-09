@@ -10,9 +10,10 @@ with the web commands on the same account; `COMMANDS` in `_sitemap.js` says whic
   Video header, and the free agent uses from the Agent tab — the web `dreamface/credits`), `image-models` (the AI Image
   models in the composer's row, first is the default — the web `dreamface/image-models`).
 - **Login**: `login {email, password}` signs the app in to that email account through Settings → "Log in" → "Continue
-  with Email" (the app's token is its own, separate from the web session), logging out another account first; already
-  signed in to the same email, it returns without touching the form. The gear on the Profile tab is tapped by position
-  (the tab cannot be read). A verification code is never entered by the command: with `verify_wait_sec` it waits for a
+  with Email" (the app's token is its own, separate from the web session). Which account the app is signed in to is
+  read off the Account page (Settings → the Account row, which shows the nickname once signed in): the same email
+  returns without touching the form, another account is logged out first. The gear on the Profile tab is tapped by
+  position (the tab cannot be read). A verification code is never entered by the command: with `verify_wait_sec` it waits for a
   person to enter it on the device, without it fails with `verification_required`.
 - **Write**: none besides `login` yet. A write command (a generation flow) is marked `access: 'write'`, spends credits
   or a free use and is run at most once per test case.
