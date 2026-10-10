@@ -596,3 +596,9 @@ Please also review our [Code of Conduct](CODE_OF_CONDUCT.md).
 Mobile MCP runs locally and communicates only with the devices you connect.
 See the Mobile Next privacy policy at https://mobilenext.ai/privacy for data
 collection, usage, retention, and contact information.
+
+## Capture certificate compatibility
+
+HTTPS capture uses Node WebCrypto for RSA signing and `@peculiar/x509` for certificate encoding. Existing PEM CA keys and certificates are loaded without replacement; their fingerprints and Android certificate file hashes remain stable. Incomplete or mismatched pairs are rejected rather than silently replacing device trust. Certificate generation is asynchronous and TLS contexts are cached per host.
+
+Fork CI runs dependency audit, lint, build and unit/protocol tests on hosted runners. Device tests require the upstream self-hosted runner; real App smoke results are recorded separately.

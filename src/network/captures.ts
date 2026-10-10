@@ -64,7 +64,7 @@ export class NetworkCaptures {
 		let ca: CertificateAuthority | undefined;
 		let installed: CaInstall | undefined;
 		if (options.decryptHttps) {
-			ca = this.ca ??= CertificateAuthority.load(this.dir);
+			ca = this.ca ??= await CertificateAuthority.load(this.dir);
 			installed = this.control.installCa(deviceId, ca.certPem, ca.androidHash);
 		}
 

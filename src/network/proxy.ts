@@ -388,7 +388,7 @@ export class CaptureProxy {
 		}
 
 		if (this.decryptHttps && this.options.ca) {
-			this.decrypt(host, port, socket, head);
+			void this.decrypt(host, port, socket, head).catch(() => { socket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n"); });
 			return;
 		}
 
@@ -437,8 +437,11 @@ export class CaptureProxy {
 		socket.on("close", () => done());
 	}
 
-	private decrypt(host: string, port: number, socket: net.Socket, head: Buffer): void {
+	private async decrypt(host: string, port: number, socket: net.Socket, head: Buffer): Promise<void> {
 		const ca = this.options.ca!;
+		socket.pause();
+		const context = await ca.contextFor(host);
+		if (socket.destroyed) { return; }
 		socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
 		if (head.length) {
 			socket.unshift(head);
@@ -446,10 +449,11 @@ export class CaptureProxy {
 
 		const tlsSocket: TargetSocket = new tls.TLSSocket(socket, {
 			isServer: true,
-			secureContext: ca.contextFor(host),
-			SNICallback: (servername, callback) => callback(null, ca.contextFor(servername || host)),
+			secureContext: context,
+			SNICallback: (servername, callback) => { void ca.contextFor(servername || host).then(value => callback(null, value), error => callback(error)); },
 			ALPNProtocols: ["http/1.1"],
 		});
+		socket.resume();
 		tlsSocket.__proxyTarget = { host, port };
 		this.track(tlsSocket);
 		let secure = false;
