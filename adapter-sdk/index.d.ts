@@ -162,9 +162,23 @@ export interface AdapterContext {
   screen: Screen;
   expect: Expect;
   apps: Apps;
+  /** Inspect this app's own debug-enabled WebViews. adapterApi 3. Never substitutes an external browser. */
+  webview: {
+    list(): Promise<Array<{ device: string; packageName: string; id: string; title: string; url: string }>>;
+    run<T>(options: { pageId?: string; origin?: string }, run: (page: WebviewPage) => Promise<T>): Promise<T>;
+  };
   /** This app's folder name and its package names from app.json / the descriptor. */
   app: { name: string; packages: string[] };
   signal?: AbortSignal;
+}
+
+/** Borrowed for one adapter call; forwarding and CDP are cleaned up on return or error. */
+export interface WebviewPage {
+  url(): Promise<string>;
+  observe(maxChars?: number): Promise<{ id: string; state: string; text: string; truncated: boolean }>;
+  /** Trusted adapter code only, never an Agent-facing arbitrary-JS tool. */
+  evaluate(expression: string, options?: { timeoutMs?: number; allowWrite?: boolean }): Promise<unknown>;
+  fetchJson(url: string, options?: { method?: string; headers?: Record<string, string>; body?: unknown; timeoutMs?: number }): Promise<unknown>;
 }
 
 export interface AdapterDescriptor {

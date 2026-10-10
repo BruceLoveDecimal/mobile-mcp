@@ -133,14 +133,14 @@ test("an unreachable upstream is a 502 and an entry with the error", async () =>
 
 test("HTTPS is tunnelled by default (metadata only) and decrypted with the CA on request", async () => {
 	const dir = tmpDir("mobile-mcp-ca-");
-	const ca = CertificateAuthority.load(dir);
+	const ca = await CertificateAuthority.load(dir);
 	expect(fs.statSync(path.join(dir, "ca.key.pem")).mode & 0o777).toBe(0o600);
 	expect(ca.androidHash).toMatch(/^[0-9a-f]{8}$/);
-	expect(CertificateAuthority.load(dir).fingerprint).toBe(ca.fingerprint);
+	expect((await CertificateAuthority.load(dir)).fingerprint).toBe(ca.fingerprint);
 
 	// the upstream presents a certificate from the same CA, which the proxy is told to trust
-	const serverCa = CertificateAuthority.load(tmpDir("mobile-mcp-upstream-ca-"));
-	const upstream = https.createServer({ SNICallback: (name, cb) => cb(null, serverCa.contextFor(name)) }, echoHandler);
+	const serverCa = await CertificateAuthority.load(tmpDir("mobile-mcp-upstream-ca-"));
+	const upstream = https.createServer({ SNICallback: (name, cb) => { void serverCa.contextFor(name).then(context => cb(null, context), cb); } }, echoHandler);
 	const upstreamPort = await listen(upstream);
 
 	const tunnelOnly = new CaptureProxy({ ca, upstreamCa: [serverCa.certPem] });
@@ -264,4 +264,42 @@ test("network_capture and network_inspect tools drive one capture per device", a
 		await client.close();
 		await server.close();
 	}
+});
+
+test("legacy PEM trust survives migration and still signs a verified TLS leaf", async () => {
+	const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "legacy-ca.json"), "utf8"));
+	const dir = tmpDir("mobile-mcp-legacy-ca-");
+	fs.writeFileSync(path.join(dir, "ca.key.pem"), fixture.key, { mode: 0o600 });
+	fs.writeFileSync(path.join(dir, "ca.cert.pem"), fixture.cert);
+	const [ca, concurrent] = await Promise.all([CertificateAuthority.load(dir), CertificateAuthority.load(dir)]);
+	expect(concurrent).toBe(ca);
+	expect(ca.fingerprint).toBe(fixture.fingerprint);
+	expect(ca.androidHash).toBe(fixture.androidHash);
+	expect(fs.readFileSync(path.join(dir, "ca.key.pem"), "utf8")).toBe(fixture.key);
+	expect(fs.readFileSync(path.join(dir, "ca.cert.pem"), "utf8")).toBe(fixture.cert);
+	const server = https.createServer({ SNICallback: (name, cb) => { void ca.contextFor(name).then(context => cb(null, context), cb); } }, echoHandler);
+	const port = await listen(server);
+	try {
+		const reply = await new Promise<string>((resolve, reject) => {
+			const req = https.get({ host: "127.0.0.1", port, servername: "localhost", ca: fixture.cert, rejectUnauthorized: true }, res => {
+				const chunks: Buffer[] = [];
+				res.on("data", chunk => chunks.push(chunk));
+				res.on("end", () => resolve(Buffer.concat(chunks).toString()));
+			});
+			req.on("error", reject);
+		});
+		expect(reply).toContain('"method":"GET"');
+	} finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test("incomplete or mismatched CA files are rejected without replacing installed trust", async () => {
+	const dir = tmpDir("mobile-mcp-invalid-ca-");
+	const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "legacy-ca.json"), "utf8"));
+	fs.writeFileSync(path.join(dir, "ca.cert.pem"), fixture.cert);
+	await expect(CertificateAuthority.load(dir)).rejects.toThrow();
+	expect(fs.existsSync(path.join(dir, "ca.key.pem"))).toBe(false);
+	const other = await CertificateAuthority.load(tmpDir("mobile-mcp-other-ca-"));
+	fs.copyFileSync(path.join(other.dir, "ca.key.pem"), path.join(dir, "ca.key.pem"));
+	await expect(CertificateAuthority.load(dir)).rejects.toThrow("Invalid network capture CA");
+	expect(fs.readFileSync(path.join(dir, "ca.cert.pem"), "utf8")).toBe(fixture.cert);
 });

@@ -24,6 +24,8 @@ import { runCommand } from "./adapters/executor";
 import { DeviceLocks } from "./adapters/device-lock";
 import { Source } from "./adapters/types";
 import { NetworkCaptures } from "./network/captures";
+import { Webviews } from "./webview";
+import { toErrorBody } from "./adapters/errors";
 
 type ScreenshotContent = { type: "text", text: string } | { type: "image", data: string, mimeType: string };
 
@@ -106,6 +108,7 @@ export interface McpServerOptions {
 	adapterSources?: Source[];
 	/** Network captures (one proxy per device). Default: adb-controlled, CA under MOBILE_MCP_NETWORK_DIR or ~/.mobile-mcp/network. */
 	networkCaptures?: NetworkCaptures;
+	webviews?: Webviews;
 }
 
 export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
@@ -143,6 +146,25 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 
 	// calls on one device run one at a time, so an app_run flow is never interleaved with other taps
 	const deviceLocks = new DeviceLocks();
+	const webviews = options.webviews ?? new Webviews();
+	const close = server.close.bind(server);
+	server.close = async () => { await webviews.close(); await close(); };
+	server.registerTool("mobile_webview", {
+		title: "Inspect App WebView",
+		description: "Discover debug-enabled WebViews belonging to one Android app, or read a chosen page's accessibility hierarchy and rendered text. Never navigates, launches a browser or reads another app's session. No pages means unavailable, not a native UI failure. wN refs are observation-only; native action refs remain @eN.",
+		inputSchema: z.object({ device: z.string(), packageName: z.string(), action: z.enum(["list", "observe", "read"]).default("list"), pageId: z.string().optional(), maxChars: z.number().int().min(200).max(100000).default(20000) }).strict(),
+		annotations: { readOnlyHint: true, openWorldHint: true },
+	}, async ({ device, packageName, action, pageId, maxChars }, ctx: any) => {
+		try {
+			const value = await deviceLocks.run<unknown>(device, () => action === "list"
+				? webviews.list(device, packageName, ctx?.mcpReq?.signal)
+				: webviews.withPage(device, packageName, pageId, async page => {
+					const snapshot = await page.observe(maxChars);
+					return action === "read" ? { ...snapshot, state: undefined } : snapshot;
+				}, ctx?.mcpReq?.signal));
+			return { content: [{ type: "text" as const, text: JSON.stringify({ ok: true, device, packageName, ...(action === "list" ? { supported: (value as unknown[]).length > 0, pages: value } : { snapshot: value }) }) }] };
+		} catch (error) { return { content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: toErrorBody(error) }) }], isError: true }; }
+	});
 	const onDevice = <T>(args: any, fn: () => Promise<T>): Promise<T> =>
 		typeof args?.device === "string" ? deviceLocks.run(args.device, fn) : fn();
 
@@ -156,12 +178,12 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 		}, (async (args: any, _extra: any) => {
 			scarf();
 			try {
-				trace(`Invoking ${name} with args: ${JSON.stringify(args)}`);
+				trace(`Invoking ${name}`);
 				const start = +new Date();
 				const telemetry: Record<string, string | number> = {};
 				const response = await onDevice(args, () => cb(args, telemetry));
 				const duration = +new Date() - start;
-				trace(`=> ${response}`);
+				trace(`${name} completed in ${duration}ms`);
 				posthog("tool_invoked", { "ToolName": name, "Duration": duration, ...telemetry }).then();
 				return {
 					content: [{ type: "text", text: response }],
@@ -174,7 +196,7 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 					};
 				} else {
 					// a real exception
-					trace(`Tool '${description}' failed: ${error.message} stack: ${error.stack}`);
+					trace(`${name} failed`);
 					return {
 						content: [{ type: "text", text: `Error: ${error.message}` }],
 						isError: true,
@@ -1264,6 +1286,7 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 	prepareSources(adapterSources, msg => error(`[adapters] ${msg}`));
 	const appRegistry = new AppRegistry(adapterSources, msg => error(`[adapters] ${msg}`));
 	const deviceProvider = {
+		webviews,
 		getRobot: (deviceId: string) => getRobotFromDevice(deviceId),
 		platform: async (deviceId: string) => {
 			if (!devicePlatforms.has(deviceId)) {
@@ -1330,11 +1353,11 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 			}
 
 			try {
-				trace(`Invoking app_run ${app}/${command} on ${device} with args: ${JSON.stringify(args)}`);
+				trace(`Invoking app_run ${app}/${command} on ${device}`);
 				const r = await deviceLocks.run(device, () => runCommand(app, command, args ?? {}, { deviceId: device, provider: deviceProvider, registry: appRegistry, signal: req.signal }));
 				posthog(r.ok ? "tool_invoked" : "tool_failed", { "ToolName": "app_run", "Duration": r.elapsedMs }).then();
 				if (!r.ok) {
-					trace(`=> ${app}/${command} failed: ${r.error.code} ${r.error.message}`);
+					trace(`=> ${app}/${command} failed: ${r.error.code}`);
 					return jsonResult({ ok: false, app: r.app, command: r.command, ...(r.source && { source: r.source }), error: r.error }, true);
 				}
 

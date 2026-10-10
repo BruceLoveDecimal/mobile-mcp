@@ -36,6 +36,7 @@ export interface AdapterContext {
 	screen: unknown;
 	expect: unknown;
 	apps: unknown;
+	webview: unknown;
 	app: { name: string; packages: string[] };
 	signal?: AbortSignal;
 }

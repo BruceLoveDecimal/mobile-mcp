@@ -461,15 +461,15 @@ export const TRAPS = [
   },
 ];
 
-/** Which command covers which screen, and where the server-side check lives (the web adapter, same account). */
+/** Native screen commands and API checks bound to the current App session. */
 export const COMMANDS = [
   { command: 'dreamface-app/sitemap', screens: [], screen: '(none: reads this file)', note: 'read' },
   { command: 'dreamface-app/login', screens: ['settings', 'account', 'login', 'login-email'], screen: 'Settings → Log in → Continue with Email (signed in: Settings → Account → Log out first)', note: 'write: signs the app in to an email account (logs out another); a verification code is entered by a person' },
   { command: 'dreamface-app/open', screens: SCREENS.filter((s) => s.open).map((s) => s.id), screen: 'any screen with `open` taps', note: 'read: launches the app and navigates, never submits' },
-  { command: 'dreamface-app/credits', screens: ['credits', 'agent'], screen: 'Purchase Credits (via the AI Video header) and the agent composer', note: 'read: total / purchased / weekly credits and free agent uses, as dreamface/credits reads them on the web' },
-  { command: 'dreamface-app/image-models', screens: ['image-composer'], screen: 'AI Image Generator composer', note: 'read: the model row, as dreamface/image-models lists them on the web' },
-  { command: 'dreamface/credits (web, opencli-mcp)', screens: ['credits'], screen: 'credit count', note: 'same account as the app: check credits before and after an app write' },
-  { command: 'dreamface/works (web, opencli-mcp)', screens: ['profile'], screen: 'creations list', note: 'same account: confirm a generation started from the app reached the server' },
+  { command: 'dreamface-app/credits-ui', screens: ['credits', 'agent'], screen: 'Purchase Credits (via the AI Video header) and the agent composer', note: 'read: total / purchased / weekly credits and free agent uses, as dreamface/credits reads them on the web' },
+  { command: 'dreamface-app/image-models-ui', screens: ['image-composer'], screen: 'AI Image Generator composer', note: 'read: the model row, as dreamface/image-models lists them on the web' },
+  { command: 'dreamface-app/credits', screens: ['ai-video'], screen: 'current App H5', note: 'read: current App session through its native HTTP client; no web account substitution' },
+  { command: 'dreamface-app/works', screens: ['ai-video'], screen: 'current App H5', note: 'read: current App works and status; use work for the download URL' },
 ];
 
 export const screenById = (id, screens = SCREENS) => screens.find((s) => s.id === id);

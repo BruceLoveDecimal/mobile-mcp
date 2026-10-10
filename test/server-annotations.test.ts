@@ -5,6 +5,7 @@ import { createMcpServer } from "../src/server";
 type ToolAnnotationMatrix = Record<string, ToolAnnotations>;
 
 const expectedAnnotations: ToolAnnotationMatrix = {
+	mobile_webview: { readOnlyHint: true, openWorldHint: true },
 	mobile_observe: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
 	mobile_assert: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
 	mobile_action: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },

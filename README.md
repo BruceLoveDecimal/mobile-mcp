@@ -76,6 +76,14 @@ These tools use one per-device lock across locating, writing and asserting. They
 
 Results contain `ok`, the decisive `snapshot`, optional `matched`, an `error.code` on failure, and `metrics.reads`/`elapsedMs`. Consumers can persist the full snapshot and show a concise projection. Without `expect`, a successful action acknowledges dispatch, not a verified business outcome. Ref-based actions require the `snapshotId` previously shown to the caller and validate a fresh read before tapping.
 
+## Android App WebViews
+
+`mobile_webview {device, packageName, action: "list"}` discovers debug-enabled pages in that package's running processes. `observe` returns the full accessibility hierarchy, selected/disabled state, rendered text, target metadata and a snapshot id; `read` returns the text projection. Select `pageId` when multiple pages match. `maxChars` bounds the payload and `truncated` signals omitted content. The `wN` refs are observation-only; native actions still use their `@eN` snapshot references.
+
+No debug endpoint means unavailable, not a native UI failure. The engine never enables debugging, roots a device, opens an external browser or substitutes an account. Forwarding and CDP sockets are cleaned up after the call or cancellation. Password fields and credential query parameters are masked.
+
+Adapter API 3 adds `ctx.webview.list()` and `ctx.webview.run({pageId?,origin?}, async page => ...)`. Trusted adapters may use `page.url()`, `observe()`, `evaluate()` and same-origin `fetchJson()`; there is no arbitrary-JavaScript MCP tool. App-specific protocol/authentication stays in adapters. [DreamFace command parity and limitations](adapters/dreamface-app/README.md).
+
 ## 🔧 Available MCP Tools
 
 ### Device Management
@@ -588,3 +596,9 @@ Please also review our [Code of Conduct](CODE_OF_CONDUCT.md).
 Mobile MCP runs locally and communicates only with the devices you connect.
 See the Mobile Next privacy policy at https://mobilenext.ai/privacy for data
 collection, usage, retention, and contact information.
+
+## Capture certificate compatibility
+
+HTTPS capture uses Node WebCrypto for RSA signing and `@peculiar/x509` for certificate encoding. Existing PEM CA keys and certificates are loaded without replacement; their fingerprints and Android certificate file hashes remain stable. Incomplete or mismatched pairs are rejected rather than silently replacing device trust. Certificate generation is asynchronous and TLS contexts are cached per host.
+
+Fork CI runs dependency audit, lint, build and unit/protocol tests on hosted runners. Device tests require the upstream self-hosted runner; real App smoke results are recorded separately.
