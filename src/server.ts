@@ -13,8 +13,9 @@ import { IosManager, IosRobot } from "./ios";
 import { PNG } from "./png";
 import { getJpegDimensions } from "./jpeg";
 import { describeCoordinateMapping } from "./coordinate-mapping";
-import { Mobilecli } from "./mobilecli";
+import { Mobilecli, MobilecliDevicesResponse as DeviceDiscoveryResponse } from "./mobilecli";
 import { MobileDevice } from "./mobile-device";
+import { registerInteractionTools } from "./interaction-tools";
 import { validateOutputPath, validateFileExtension } from "./utils";
 import { formatElements } from "./format-elements";
 import { AppRegistry } from "./adapters/loader";
@@ -269,6 +270,21 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 		robotCache.set(deviceId, robot);
 		return robot;
 	};
+
+	// Semantic Android tools must also bound cold device discovery, before a robot is cached.
+	registerInteractionTools(server, async (deviceId, context) => {
+		const cached = robotCache.get(deviceId);
+		if (cached && devicePlatforms.get(deviceId) === "android" && cached.withCommandContext) { return cached; }
+		const raw = await mobilecli.executeCommandAsync(["devices", "--platform", "android"], context.deadline - Date.now(), context.signal);
+		const response = JSON.parse(raw) as DeviceDiscoveryResponse;
+		if (!response.data?.devices?.some(device => device.id === deviceId && device.state === "online")) {
+			throw new ActionableError(`Device "${deviceId}" not found. Semantic UI tools require an online Android device.`);
+		}
+		const robot = new MobileDevice(deviceId);
+		robotCache.set(deviceId, robot);
+		devicePlatforms.set(deviceId, "android");
+		return robot;
+	}, deviceLocks);
 
 	const createRobotFromDevice = (deviceId: string): Robot => {
 

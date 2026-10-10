@@ -86,6 +86,32 @@ const inside = (inner: ScreenElement, outer: ScreenElement): boolean =>
 
 const visible = (e: ScreenElement): boolean => e.rect.width > 0 && e.rect.height > 0;
 
+/** One semantic selector. Fields constrain the same element; locator chaining still searches descendants. */
+export interface ElementTarget {
+ text?: Pattern;
+ label?: Pattern;
+ id?: string;
+ role?: string;
+ name?: Pattern;
+ exact?: boolean;
+ nth?: number;
+}
+
+export const matchesTarget = (e: ScreenElement, target: ElementTarget): boolean => {
+	if (target.text !== undefined && !anyMatches([e.text, e.label, e.name], target.text, target.exact)) { return false; }
+	if (target.label !== undefined && !anyMatches([e.label, e.name], target.label, target.exact)) { return false; }
+	if (target.id !== undefined && !(e.identifier && (e.identifier === target.id || e.identifier.endsWith(`:id/${target.id}`) || e.identifier.endsWith(`/${target.id}`)))) { return false; }
+	if (target.role !== undefined && (roleOf(e) !== target.role.toLowerCase() || (target.name !== undefined && !anyMatches([e.text, e.label, e.name, e.value], target.name, target.exact)))) { return false; }
+	return true;
+};
+
+export const resolveTarget = (elements: ScreenElement[], target: ElementTarget): ScreenElement[] => {
+	const matches = elements.filter(e => visible(e) && matchesTarget(e, target));
+	if (target.nth === undefined) { return matches; }
+	const picked = matches.at(target.nth);
+	return picked ? [picked] : [];
+};
+
 /** Text an agent would read off the element. */
 export const elementText = (e: ScreenElement): string => e.text || e.label || e.value || e.name || "";
 
@@ -149,11 +175,11 @@ export class Locator {
 	}
 
 	getByText(text: Pattern, opts: TextOptions = {}): Locator {
-		return this.with({ kind: "filter", describe: `text=${show(text)}`, test: e => anyMatches([e.text, e.label, e.name], text, opts.exact) });
+		return this.with({ kind: "filter", describe: `text=${show(text)}`, test: e => matchesTarget(e, { text, exact: opts.exact }) });
 	}
 
 	getByLabel(label: Pattern, opts: TextOptions = {}): Locator {
-		return this.with({ kind: "filter", describe: `label=${show(label)}`, test: e => anyMatches([e.label, e.name], label, opts.exact) });
+		return this.with({ kind: "filter", describe: `label=${show(label)}`, test: e => matchesTarget(e, { label, exact: opts.exact }) });
 	}
 
 	getByRole(role: string, opts: TextOptions & { name?: Pattern } = {}): Locator {
@@ -161,7 +187,7 @@ export class Locator {
 		return this.with({
 			kind: "filter",
 			describe: `role=${role}${name !== undefined ? `[name=${show(name)}]` : ""}`,
-			test: e => roleOf(e) === role.toLowerCase() && (name === undefined || anyMatches([e.text, e.label, e.name, e.value], name, opts.exact)),
+			test: e => matchesTarget(e, { role, name, exact: opts.exact }),
 		});
 	}
 

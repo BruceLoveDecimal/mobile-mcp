@@ -1,4 +1,3 @@
-import { ActionableError } from "../robot";
 
 export interface ErrorBody {
 	code: string;
@@ -20,8 +19,12 @@ export const toErrorBody = (err: unknown): ErrorBody => {
 	const e = (err ?? {}) as { code?: unknown; message?: unknown; hint?: unknown; details?: unknown };
 	let code = typeof e.code === "string" && e.code ? e.code : "command_failed";
 	const message = String(e.message ?? err);
-	if (err instanceof ActionableError && /Device ".*" not found|mobilecli is not available/.test(message)) {
+	if (/Device ".*" not found|mobilecli is not available|device offline|device unauthorized|no devices\/emulators found/i.test(message)) {
 		code = "device_unavailable";
+	}
+
+	if (/failed to dump UI|no XML content|uiautomator dump/i.test(message)) {
+		code = "ui_unavailable";
 	}
 
 	return {

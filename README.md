@@ -68,6 +68,14 @@ How we help to scale mobile automation:
 | Android Emulator | ✅ | Android SDK + running emulator (`adb`) |
 | Android Real Device | ✅ | `adb` + USB debugging enabled & authorized |
 
+## Semantic Android UI operations
+
+`mobile_observe` reads a fresh snapshot. `since` can request an unchanged indicator against a previous snapshot; it never returns cached state as current. `mobile_action` supports semantic `target` fields (`text`, `label`, `id`, `role`, `name`, `exact`, `nth`) and optional `expect`/`state`. Actions require a unique enabled target. `mobile_assert` returns the exact snapshot used to evaluate visible/hidden/enabled/disabled/checked/unchecked. `mobile_scroll_until` has a swipe limit and stops after two unchanged swipes; x/y select a scroll region.
+
+These tools use one per-device lock across locating, writing and asserting. They are called directly, outside `mobile_batch_commands`. Defaults are 5 seconds (15 for scrolling), with a maximum `timeoutMs` of 120000. Android discovery and mobilecli commands share the remaining deadline and cancellation. Already dispatched device work cannot be undone: `command_outcome_unknown` means observe first, never blindly retry. There is no unconditional whole-screen settle and no stable-flow replay implementation.
+
+Results contain `ok`, the decisive `snapshot`, optional `matched`, an `error.code` on failure, and `metrics.reads`/`elapsedMs`. Consumers can persist the full snapshot and show a concise projection. Without `expect`, a successful action acknowledges dispatch, not a verified business outcome. Ref-based actions require the `snapshotId` previously shown to the caller and validate a fresh read before tapping.
+
 ## 🔧 Available MCP Tools
 
 ### Device Management

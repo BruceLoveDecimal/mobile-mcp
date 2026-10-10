@@ -1,5 +1,6 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Mobilecli } from "./mobilecli";
-import { ActionableError, Button, InstalledApp, Orientation, Robot, ScreenElement, ScreenSize, ScreenshotOptions, SwipeDirection } from "./robot";
+import { ActionableError, Button, CommandContext, InstalledApp, Orientation, Robot, ScreenElement, ScreenSize, ScreenshotOptions, SwipeDirection } from "./robot";
 
 interface InstalledAppsResponse {
 	status: "ok",
@@ -104,18 +105,28 @@ const flattenUIElement = (element: UIElementResponse): ScreenElement[] => {
 export class MobileDevice implements Robot {
 
 	private mobilecli: Mobilecli;
+	private commandContext = new AsyncLocalStorage<CommandContext>();
+	public withCommandContext<T>(context: CommandContext, run: () => Promise<T>): Promise<T> {
+		return this.commandContext.run(context, run);
+	}
 
 	public constructor(private deviceId: string) {
 		this.mobilecli = new Mobilecli();
 	}
 
-	private runCommand(args: string[]): string {
+	private async runCommand(args: string[]): Promise<string> {
 		const fullArgs = [...args, "--device", this.deviceId];
+		const context = this.commandContext.getStore();
+		if (context) {
+			const remaining = context.deadline - Date.now();
+			if (remaining <= 0 || context.signal.aborted) { throw new Error("UI command cancelled or timed out"); }
+			return this.mobilecli.executeCommandAsync(fullArgs, remaining, context.signal);
+		}
 		return this.mobilecli.executeCommand(fullArgs);
 	}
 
-	private runJsonCommand<T>(args: string[]): T {
-		const output = this.runCommand(args);
+	private async runJsonCommand<T>(args: string[]): Promise<T> {
+		const output = await this.runCommand(args);
 		try {
 			return JSON.parse(output) as T;
 		} catch {
@@ -124,7 +135,7 @@ export class MobileDevice implements Robot {
 	}
 
 	public async getScreenSize(): Promise<ScreenSize> {
-		const response = this.runJsonCommand<DeviceInfoResponse>(["device", "info"]);
+		const response = await this.runJsonCommand<DeviceInfoResponse>(["device", "info"]);
 		if (response.data.device.screenSize) {
 			return response.data.device.screenSize;
 		}
@@ -161,7 +172,7 @@ export class MobileDevice implements Robot {
 				break;
 		}
 
-		this.runCommand(["io", "swipe", `${startX},${startY},${endX},${endY}`]);
+		await this.runCommand(["io", "swipe", `${startX},${startY},${endX},${endY}`]);
 	}
 
 	public async swipeFromCoordinate(x: number, y: number, direction: SwipeDirection, distance?: number): Promise<void> {
@@ -184,7 +195,7 @@ export class MobileDevice implements Robot {
 				break;
 		}
 
-		this.runCommand(["io", "swipe", `${Math.round(x)},${Math.round(y)},${Math.round(endX)},${Math.round(endY)}`]);
+		await this.runCommand(["io", "swipe", `${Math.round(x)},${Math.round(y)},${Math.round(endX)},${Math.round(endY)}`]);
 	}
 
 	public async getScreenshot(options?: ScreenshotOptions): Promise<Buffer> {
@@ -206,7 +217,7 @@ export class MobileDevice implements Robot {
 	}
 
 	public async listApps(): Promise<InstalledApp[]> {
-		const response = this.runJsonCommand<InstalledAppsResponse>(["apps", "list"]);
+		const response = await this.runJsonCommand<InstalledAppsResponse>(["apps", "list"]);
 		return response.data.map(app => ({
 			appName: app.appName || app.packageName,
 			packageName: app.packageName,
@@ -214,7 +225,7 @@ export class MobileDevice implements Robot {
 	}
 
 	public async getForegroundApp(): Promise<InstalledApp> {
-		const response = this.runJsonCommand<ForegroundAppResponse>(["apps", "foreground"]);
+		const response = await this.runJsonCommand<ForegroundAppResponse>(["apps", "foreground"]);
 		return {
 			appName: response.data.appName || response.data.packageName,
 			packageName: response.data.packageName,
@@ -227,40 +238,40 @@ export class MobileDevice implements Robot {
 			args.push("--locale", locale);
 		}
 
-		this.runCommand(args);
+		await this.runCommand(args);
 	}
 
 	public async terminateApp(packageName: string): Promise<void> {
-		this.runCommand(["apps", "terminate", packageName]);
+		await this.runCommand(["apps", "terminate", packageName]);
 	}
 
 	public async installApp(path: string): Promise<void> {
-		this.runCommand(["apps", "install", path]);
+		await this.runCommand(["apps", "install", path]);
 	}
 
 	public async uninstallApp(bundleId: string): Promise<void> {
-		this.runCommand(["apps", "uninstall", bundleId]);
+		await this.runCommand(["apps", "uninstall", bundleId]);
 	}
 
 	public async openUrl(url: string): Promise<void> {
-		this.runCommand(["url", url]);
+		await this.runCommand(["url", url]);
 	}
 
 	public async sendKeys(text: string): Promise<void> {
-		this.runCommand(["io", "text", text]);
+		await this.runCommand(["io", "text", text]);
 	}
 
 	public async pressButton(button: Button): Promise<void> {
-		this.runCommand(["io", "button", button]);
+		await this.runCommand(["io", "button", button]);
 	}
 
 	public async tap(x: number, y: number): Promise<void> {
 		// mobilecli rejects fractional coordinates ("x and y must be integers")
-		this.runCommand(["io", "tap", `${Math.round(x)},${Math.round(y)}`]);
+		await this.runCommand(["io", "tap", `${Math.round(x)},${Math.round(y)}`]);
 	}
 
 	public async tapByRef(ref: string): Promise<void> {
-		this.runCommand(["io", "tap", ref]);
+		await this.runCommand(["io", "tap", ref]);
 	}
 
 	public async doubleTap(x: number, y: number): Promise<void> {
@@ -270,38 +281,38 @@ export class MobileDevice implements Robot {
 	}
 
 	public async longPress(x: number, y: number, duration: number): Promise<void> {
-		this.runCommand(["io", "longpress", `${Math.round(x)},${Math.round(y)}`, "--duration", `${duration}`]);
+		await this.runCommand(["io", "longpress", `${Math.round(x)},${Math.round(y)}`, "--duration", `${duration}`]);
 	}
 
 	public async getElementsOnScreen(): Promise<ScreenElement[]> {
-		const response = this.runJsonCommand<DumpUIResponse>(["dump", "ui"]);
+		const response = await this.runJsonCommand<DumpUIResponse>(["dump", "ui"]);
 		return response.data.elements.flatMap(element => flattenUIElement(element));
 	}
 
 	public async setOrientation(orientation: Orientation): Promise<void> {
-		this.runCommand(["device", "orientation", "set", orientation]);
+		await this.runCommand(["device", "orientation", "set", orientation]);
 	}
 
 	public async getOrientation(): Promise<Orientation> {
-		const response = this.runJsonCommand<OrientationResponse>(["device", "orientation", "get"]);
+		const response = await this.runJsonCommand<OrientationResponse>(["device", "orientation", "get"]);
 		return response.data.orientation;
 	}
 
 	public async setLocation(latitude: number, longitude: number): Promise<void> {
-		this.runCommand(["device", "location", "set", `${latitude},${longitude}`]);
+		await this.runCommand(["device", "location", "set", `${latitude},${longitude}`]);
 	}
 
 	public async clearLocation(): Promise<void> {
-		this.runCommand(["device", "location", "clear"]);
+		await this.runCommand(["device", "location", "clear"]);
 	}
 
 	public async getClipboard(): Promise<string> {
-		const response = this.runJsonCommand<ClipboardResponse>(["io", "clipboard", "get"]);
+		const response = await this.runJsonCommand<ClipboardResponse>(["io", "clipboard", "get"]);
 		return response.data.text;
 	}
 
 	public async setClipboard(text: string): Promise<void> {
-		this.runCommand(["io", "clipboard", "set", text]);
+		await this.runCommand(["io", "clipboard", "set", text]);
 	}
 
 	public getLogs(limit: number, filters: string[], timeoutMs: number): Promise<string> {

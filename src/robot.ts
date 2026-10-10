@@ -58,7 +58,15 @@ export interface ScreenshotOptions {
 	maxSize?: number;
 }
 
+export interface CommandContext {
+	deadline: number;
+	signal: AbortSignal;
+}
+
 export interface Robot {
+	/** Bound all subprocesses in a compound UI operation, including cancellation. */
+	withCommandContext?<T>(context: CommandContext, run: () => Promise<T>): Promise<T>;
+
 	/**
 	 * Get the screen size of the device in pixels.
 	 */

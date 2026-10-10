@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
-import { execFileSync, spawn, ChildProcess } from "node:child_process";
+import { execFile, execFileSync, spawn, ChildProcess } from "node:child_process";
 
 export interface MobilecliCrashEntry {
 	processName: string;
@@ -89,6 +89,15 @@ export class Mobilecli {
 		}
 
 		return execFileSync(path, args, options).toString().trim();
+	}
+
+	/** UI polling must not block the MCP event loop, otherwise cancellation cannot reach the device command. */
+	public executeCommandAsync(args: string[], timeoutMs: number, signal: AbortSignal): Promise<string> {
+		return new Promise((resolve, reject) => {
+			execFile(this.getPath(), args, { encoding: "utf8", timeout: Math.max(1, timeoutMs), signal, maxBuffer: MAX_BUFFER_SIZE }, (error, stdout, stderr) => {
+				if (error) { reject(Object.assign(error, { message: stderr.trim() || error.message })); } else { resolve(stdout.trim()); }
+			});
+		});
 	}
 
 	public spawnCommand(args: string[], captureOutput = false): ChildProcess {
