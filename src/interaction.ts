@@ -104,6 +104,10 @@ export class Interaction {
 				return snapshot;
 			} catch (error) {
 				const body = toErrorBody(error);
+				if (signal.aborted && snapshot && !cancellation?.aborted && ["timeout", "ETIMEDOUT", "ABORT_ERR"].includes(body.code)) {
+					// The overall budget expiring is not evidence that earlier successful reads were unavailable.
+					throw new CommandError("timeout", "Condition not met before the deadline");
+				}
 				if (["timeout", "ETIMEDOUT", "ABORT_ERR"].includes(body.code) && !cancellation?.aborted) {
 					body.code = "ui_unavailable";
 					body.message = "Screen read timed out";
@@ -235,7 +239,7 @@ export class Interaction {
 			return { ok: true, ...extra, actionSent, snapshot, metrics: { reads, elapsedMs: Date.now() - started } };
 		} catch (error) {
 			let body = toErrorBody(error);
-			if (signal.aborted || ["timeout", "ABORT_ERR", "ETIMEDOUT"].includes(body.code)) {
+			if (signal.aborted || ["timeout", "ABORT_ERR", "ETIMEDOUT"].includes(body.code) || writing && /agent timed out|context deadline exceeded|Client\.Timeout/i.test(body.message)) {
 				body = writing
 					? { code: "command_outcome_unknown", message: "An action may have reached the device. Observe before deciding whether to retry." }
 					: cancellation?.aborted ? { code: "cancelled", message: "Operation cancelled" }

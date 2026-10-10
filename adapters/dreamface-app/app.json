@@ -12,5 +12,5 @@
     "login": "login",
     "map": "sitemap"
   },
-  "guide": "- 操作前先 app_run dreamface-app/sitemap 看界面地图：有哪些屏幕、怎么进入、控件和已知的坑；它不动设备。地图里还没有的屏幕再逐步操作。\n- 用 dreamface-app/open 按地图直接进入某个屏幕（会冷启动或重启 App），比一步步点稳定；积分用 dreamface-app/credits 读。\n- 「我的」页（Profile 标签）读不出元素，它下面的入口要按位置点或换别的路径进入（见 sitemap 的 traps）。\n- access 为 write 的命令会改数据或消耗积分，用例没要求时不调用；同一条用例最多调用一次。\n- 服务端状态（积分、作品）可以用网页的 dreamface 站点命令在同一账号上核对。"
+  "guide": "- 操作前先 app_run dreamface-app/sitemap 看原生界面地图，用 open 进入页面。\n- mobile_screen 检测到 H5 时，用 mobile_webview 列出、读取当前应用的调试页面。若未开放调试，继续走原生 UI。\n- whoami、credits、works、work、image-models、avatars、voices 和 Web adapter 保持同名参数与结果；它们使用当前 App WebView 的原生身份和 HTTP 客户端。先打开 ai-video 等 App H5 页面。origin 只校验当前页面，不导航到网页；多页面用 page_id 指定。\n- 原生屏幕读取保留为 credits-ui、image-models-ui。不能将 App 和 Web 的账号、环境或积分当作相同；分别用 whoami 确认。\n- ai-image、ai-video、avatar-video 是 write 命令，可能消耗积分；仅在用例要求时调用，每条用例最多提交一次。超时先读 works / work，不能盲目重试。\n- Canvas 的 agent-chat、agent-image、agent-video 复用 App HTTP 客户端读取流；默认模型来自当前 App 的 agent-models，和网页可能不同。写入前先验证可用模型。读取接口若返回环境或鉴权错误，应保留失败证据，不能换 Web 账号补结果。\n- 同名移植命令查询或提交的是当前 App 身份下的 Web 生成服务，并不证明原生 App 的提交管线或作品列表相同。实测同一身份的 credits 与原生 H5 积分不同；用 native-state / credits-ui 读原生计数，不能用 Web 服务余额替代 UI 断言。"
 }

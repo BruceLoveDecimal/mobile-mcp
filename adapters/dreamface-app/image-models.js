@@ -1,33 +1,31 @@
-import { defineAdapter, errors } from '@mobilenext/mobile-mcp/adapter-sdk';
-import { SCREENS } from './_sitemap.js';
-import { openScreen } from './_navigate.js';
-import { screenSize, tagsNear, textOf } from './_read.js';
+import { defineAdapter } from './_webview.js';
+import { ORIGIN_ARG, api, session, siteOrigin } from './_shared.js';
 
 export default defineAdapter({
-  description: 'AI Image models offered by the DreamFace app (the row under the prompt in the AI Image Generator), with their tags. The app-side counterpart of the web dreamface/image-models. Opens the composer, types nothing, submits nothing. （AI 图像 模型）',
+  description: 'AI Image models with their aspect ratios, sizes and image counts (the `model` of ai-image). （AI 图像 模型）',
   access: 'read',
-  args: [
-    { name: 'wait_ms', type: 'int', default: 20000, min: 1000, max: 120000, help: 'How long to wait for each screen' },
-  ],
-  result: { kind: 'rows', description: 'Image models, in the order shown (the first is the default)', fields: { model: 'string', tags: 'array' } },
-  async run(ctx) {
-    const { args, screen, expect } = ctx;
-    await openScreen(ctx, SCREENS, 'image-generate', { restart: true, waitMs: args.wait_ms });
-    // The prompt bar has no accessibility text: tap it where it sits, at the bottom middle.
-    const size = screenSize(await screen.elements());
-    await screen.tap(Math.round(size.width / 2), Math.round(size.height * 0.93));
-    await expect(screen.getByText('Inspire me', { exact: true })).toBeVisible({ timeout: args.wait_ms });
-    await screen.getByText('Create', { exact: true }).waitFor({ timeout: args.wait_ms });
-
-    const elements = await screen.elements();
-    const inspire = elements.find((e) => textOf(e) === 'Inspire me');
-    const create = elements.find((e) => textOf(e) === 'Create');
-    const row = elements
-      .filter((e) => e.rect.y > inspire.rect.y + inspire.rect.height && e.rect.y + e.rect.height < create.rect.y)
-      .filter((e) => textOf(e) && !/^(new|beta|hot)$/i.test(textOf(e)))
-      .sort((a, b) => a.rect.x - b.rect.x);
-    if (!row.length) throw errors.expectation('no models between "Inspire me" and "Create"');
-    await ctx.device.back(); // leave the composer (Back closes the H5 page, see TRAPS back-closes-h5)
-    return row.map((e) => ({ model: textOf(e), tags: tagsNear(elements, e) }));
+  domain: 'facemojiapp.com',
+  args: [ORIGIN_ARG],
+  result: { kind: 'rows', description: 'One row per model', fields: { model_key: 'string', model_name: 'string', ratios: 'string[]', sizes: 'string[]', images_per_run: 'number', image_to_image: 'boolean' } },
+  async run({ tab, args }) {
+    const origin = siteOrigin(args);
+    const s = await session(tab, origin);
+    const models = await api(tab, origin, s, '/dw-server/model_config/ai_image/list/zh');
+    return {
+      rows: (models || []).filter((m) => m.is_active !== false).map((m) => {
+        const out = m.text_to_image_config?.output_config || {};
+        return {
+          model_key: m.model_key,
+          model_name: m.model_name,
+          ratios: (out.ratios || []).map((r) => r.name),
+          sizes: (out.sizes || []).map((r) => r.name),
+          images_per_run: m.text_to_image_config?.generate_count ?? 1,
+          qualities: (out.qualities || []).map((q) => q.id ?? q),
+          default_ratio: (out.ratios || [])[out.config_settings?.default_ratio_index ?? 0]?.name ?? null,
+          image_to_image: Boolean(m.image_to_image_config),
+          features: (m.features || []).map((f) => f.label),
+        };
+      }),
+    };
   },
 });

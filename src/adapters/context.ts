@@ -6,11 +6,13 @@ import { AppRegistry } from "./loader";
 import { coerceArgs } from "./schema";
 import { createExpect, Screen, ScreenDriver } from "./screen";
 import { AdapterCommand, AdapterContext } from "./types";
+import { CdpPage, Webviews } from "../webview";
 
 /** What the server gives the engine: the same robots the mobile_* tools use. */
 export interface DeviceProvider {
 	getRobot(deviceId: string): Robot | Promise<Robot>;
 	platform?(deviceId: string): Promise<"android" | "ios" | "unknown">;
+	webviews?: Webviews;
 }
 
 export interface ContextEnv {
@@ -157,6 +159,11 @@ const buildContext = (env: ContextEnv, cmd: AdapterCommand, args: Record<string,
 	expect: createExpect(driver),
 	apps: createApps(env, device, driver, depth),
 	app: { name: cmd.app, packages: cmd.packages },
+	webview: {
+		list: async () => (env.provider.webviews ?? new Webviews()).list(env.deviceId, cmd.packages.length === 1 ? cmd.packages[0] : await device.package(), env.signal),
+		run: async (options: { pageId?: string; origin?: string }, run: (page: CdpPage) => Promise<unknown>) =>
+			(env.provider.webviews ?? new Webviews()).withPage(env.deviceId, cmd.packages.length === 1 ? cmd.packages[0] : await device.package(), options.pageId, run, env.signal, options.origin),
+	},
 	signal: env.signal,
 });
 

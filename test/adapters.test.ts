@@ -451,7 +451,7 @@ test("apps_search lists apps and finds commands; app_run returns JSON and isErro
 	expect(tools).toEqual(expect.arrayContaining(["apps_search", "app_run"]));
 
 	const list = await callJson(client, "apps_search", {});
-	expect(list.body.adapterApi).toBe(2);
+	expect(list.body.adapterApi).toBe(3);
 	expect(list.body.apps).toEqual([expect.objectContaining({ app: "dreamface-app", packages: ["com.dreamapp.dubhe"] })]);
 
 	const found = await callJson(client, "apps_search", { query: "dreamface sitemap" });
@@ -469,4 +469,20 @@ test("apps_search lists apps and finds commands; app_run returns JSON and isErro
 
 	const unknown = await callJson(client, "app_run", { device: "d", app: "nope", command: "x" });
 	expect(unknown).toMatchObject({ isError: true, body: { error: { code: "unknown_app" } } });
+});
+
+test("host login arguments and failures never enter engine logs", async () => {
+	const source = managedSource({ "private/login.js": adapter(`{description:'host credentials',audience:'host',access:'write',args:[{name:'password',type:'string',required:true}],run:async({args})=>{throw errors.upstream(args.password)}}`) });
+	const previous = console.error;
+	const logs: string[] = [];
+	console.error = (...args: unknown[]) => logs.push(args.join(" "));
+	try {
+		const client = await connect([{ dir: source, kind: "managed" }]);
+		try {
+			const result = await callJson(client, "app_run", { device: "d", app: "private", command: "login", args: { password: "private-login-credential" } });
+			expect(result.isError).toBe(true);
+			expect(logs.join("\n")).not.toContain("private-login-credential");
+			expect(logs.join("\n")).toContain("upstream_error");
+		} finally {await client.close();}
+	} finally {console.error = previous;}
 });

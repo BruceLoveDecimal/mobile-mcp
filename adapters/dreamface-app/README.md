@@ -1,69 +1,30 @@
-# DreamFace app adapter
+# DreamFace Android adapter
 
-Commands for the DreamFace Android app (`com.dreamapp.dubhe`, from `app.json`). They drive the app through its user
-interface (tap, type, assert, deep link): the app's login token lives in its sandbox, so unlike the web adapter
-(opencli-mcp `dreamface/*`) nothing here calls the API. Server-side state — credits, works, task status — is checked
-with the web commands on the same account; `COMMANDS` in `_sitemap.js` says which.
+Commands target `com.dreamapp.dubhe`. Native commands (`sitemap`, `open`, host-only `login`, `credits-ui`, `image-models-ui`) use the accessibility tree. Business commands port opencli-mcp's argument names, defaults, validation and result shapes to the current App WebView.
 
-- **Read**: `sitemap` (never touches the device), `open {screen}` (restarts or launches the app and navigates by the
-  map; never submits), `credits` (total / purchased / weekly credits from Purchase Credits, reached through the AI
-  Video header, and the free agent uses from the Agent tab — the web `dreamface/credits`), `image-models` (the AI Image
-  models in the composer's row, first is the default — the web `dreamface/image-models`).
-`app.json` declares the app's `login` and `map` roles, the account it shares with the web `dreamface` site, and the
-`guide` agents working on the app get.
+## WebView commands
 
-- **Login** (`audience: 'host'`, run by the hosting application): `login {email, password}` signs the app in to that email account through Settings → "Log in" → "Continue
-  with Email" (the app's token is its own, separate from the web session). Which account the app is signed in to is
-  read off the Account page (Settings → the Account row, which shows the nickname once signed in): the same email
-  returns without touching the form, another account is logged out first. The gear on the Profile tab is tapped by
-  position (the tab cannot be read). A verification code is never entered by the command: with `verify_wait_sec` it waits for a
-  person to enter it on the device, without it fails with `verification_required`.
-- **Write**: none besides `login` yet. A write command (a generation flow) is marked `access: 'write'`, spends credits
-  or a free use and is run at most once per test case.
+Open an App H5 screen such as `open {screen:"ai-video"}` first. `mobile_webview action=list` discovers the App's pages. Canvas defaults to the current App model list rather than the web-only model default. All business commands accept optional `page_id` for multiple pages; optional `origin` asserts the current App origin and never navigates or opens a web browser. An absent debug endpoint returns `webview_not_available` and leaves native UI tools available.
 
-Commands of the web adapter that have no app command yet, and why: `works` / `whoami` (the Profile tab cannot be read,
-see the map's TRAPS `profile-unreadable`), `avatars` / `voices` (the samples are images without text), a video model
-list (the model button opens its sheet only sometimes, TRAPS `video-model-button`), and the generation commands
-(`ai-image`, `ai-video`, `avatar-video`, `agent-*`: not written until one run per flow has been checked on a device).
+The installed 6.34.1 App uses `WebViewJavascriptBridge.getClientUserInfo` and an existing webpack HTTP client. The adapter reuses that client, including native identity, request/response conversion and environment routing. It does not copy a browser JWT, read the App sandbox, synthesize authentication or send a product token to a separately tested backend. This bridge/client integration is specific to the observed H5 bundle; an incompatible release fails explicitly and requires an adapter update.
 
-## App map
+| Commands | Access | Contract |
+| --- | --- | --- |
+| whoami, credits | read | Account and balance; `email` can be null because the native bridge does not expose it |
+| works, work | read | Recent tasks, status and media URLs |
+| image-models, avatars, voices | read | Generation inputs and models |
+| projects, conversation, agent-models, agent-tools | read | Canvas service queries, if available in the App environment |
+| ai-image, ai-video, avatar-video | write | Submit once, poll status and return media; may spend credits |
+| agent-chat, agent-image, agent-video | write | Canvas stream through the App HTTP client; preflight validates the available model, then creates one project and reads the final conversation/media |
 
-`sitemap` returns the map for agents that drive the app screen by screen. Without `screen` it returns the overview
-(tree, traps, commands); with `screen` (e.g. `home`) that screen and its children with their controls and submit
-buttons. `open {screen}` walks the same map: the deepest `open.url` deep link on the way, then the `open.taps` texts,
-waiting for each screen's `markers`.
+Write requests are never retried after gateway errors or ambiguous timeouts. A timeout cannot prove a task failed: inspect `works` / `work` before submitting again. Remote generation can continue after client cancellation. API results validate the generation service; use native screen assertions/screenshots as additional evidence when a case concerns the App UI or playback.
 
-The data lives in `_sitemap.js` (`VERIFIED`, `SCREENS`, `TRAPS`, `COMMANDS`); `tree()` draws the screen tree. The
-first walk (2026-09-29, DreamFace 6.34.1 in English, guest account, see `VERIFIED`) recorded 27 screens: home and its
-top bar, the three entry cards (Avatar, AI Video, AI Image), the eight tools, the Live / Agent / Profile tabs and the
-Profile subpages. Most tool screens are H5 pages in `WebViewActivity`. The app declares no deep links to its own
-screens (`https://dreamfaceapp.com/…` opens the website), so `open` taps its way from home.
+The same native identity can still access different generation services: this run observed a service balance of 300 while the native H5 header showed 0; the native bridge confirmed a total of 300 and zero free video uses. The UI discrepancy is recorded rather than silently equated to the API balance. `credits` reports the ported web service; `native-state` and `credits-ui` provide native counters. Ported `works`/generation commands do not prove parity with the native App submission pipeline or gallery.
 
-```js
-{
-  id: 'home',                                    // stable id, the `screen` argument
-  activity: 'com.dreamapp.dubhe/.MainActivity',  // foreground Activity
-  markers: ['…'],                                // visible texts that mean "this screen is showing"
-  parent: null,
-  via: 'launch screen',                          // how a person gets here, free text
-  open: { url: 'dreamface://…', taps: ['…'] },   // how `open` gets here: deep link and/or exact texts to tap from parent
-  sections: ['…'], controls: ['button "…" → …'], // visible text quoted exactly, never @eN refs
-  submit: ['"Generate 2": enabled when …, spends 2 credits'],
-}
-```
+No assumption is made that Web and App have the same account, backend, works or balances. Confirm identities and environments separately. Native `login` retains its host-only role and waits for human verification; agents cannot call it.
 
-## Updating the map (depth-first walk)
+## Native map
 
-Walk the app with the mobile_* tools, one branch per session, and write down what you see:
+`sitemap` returns the screen tree, traps and command paths from `_sitemap.js`. `open {screen}` walks this map through deep links and taps, waiting for page markers. Native screen reads remain available as `credits-ui` and `image-models-ui`.
 
-1. For each screen: get there with `open` or its deep link, read the foreground Activity (`mobile_get_foreground_app`)
-   and the elements (`mobile_list_elements_on_screen`), then expand everything one level at a time — tabs, dialogs,
-   sheets, dropdowns, cards — and record whether the screen changed, what appeared and how you got back (Back key,
-   close button).
-2. Stop at leaves: a submit button (record its label, when it enables and what it costs) or a link that leaves the app.
-   Quote visible text exactly; never record `@eN` refs.
-3. **Do not submit, pay, log out, delete or change settings. Do not tap sample images or onboarding "Next".** Check the
-   web `dreamface/credits` and `dreamface/works` on the same account before and after a walk; if either changed, find
-   the tap that did it and add it to `TRAPS`.
-4. Update `SCREENS` / `TRAPS` / `COMMANDS` and `VERIFIED` (`<date> on <device/image>, DreamFace <versionName>
-   (<versionCode>), <account type>, <language>`).
+When refreshing the map, record only observed controls and navigation. Never infer a working generation from a click acknowledgment, progress bar or empty result tiles. Do not submit/pay/delete while collecting navigation data unless the user explicitly requests that scenario.

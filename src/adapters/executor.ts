@@ -73,8 +73,16 @@ export const runAdapter = async (cmd: AdapterCommand, rawArgs: Record<string, un
 			throw new CommandError("cancelled", `${key} cancelled by the client`);
 		}
 
-		const ctx = createContext({ deviceId: opts.deviceId, provider: opts.provider, registry: opts.registry, signal: opts.signal }, cmd, args);
-		const result = await withTimeout(Promise.resolve().then(() => cmd.run(ctx)), opts.timeoutMs ?? commandTimeoutMs(cmd, args), key, opts.signal);
+		const controller = new AbortController();
+		const signal = opts.signal ? AbortSignal.any([opts.signal, controller.signal]) : controller.signal;
+		const ctx = createContext({ deviceId: opts.deviceId, provider: opts.provider, registry: opts.registry, signal }, cmd, args);
+		let result: unknown;
+		try {
+			result = await withTimeout(Promise.resolve().then(() => cmd.run(ctx)), opts.timeoutMs ?? commandTimeoutMs(cmd, args), key, opts.signal);
+		} finally {
+			// End borrowed transports even when a caller stops waiting before the command's own deadline.
+			controller.abort();
+		}
 		const isRows = Array.isArray(result) || Boolean(result && typeof result === "object" && Array.isArray((result as { rows?: unknown }).rows));
 		if (cmd.result?.kind === "rows" && !isRows) {
 			throw new CommandError("adapter_result_mismatch", `${key} declared rows but returned a value.`, "Return an array or {rows,nextCursor?}.");

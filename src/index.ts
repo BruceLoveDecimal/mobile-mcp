@@ -105,7 +105,8 @@ const startStdioServer = async () => {
 		// (including NODE_V8_COVERAGE output). Node's default SIGINT/SIGTERM
 		// handling terminates the process without writing the coverage file,
 		// which makes the `test:mcp` report come back all zeros.
-		const shutdown = () => {
+		const shutdown = async () => {
+			await server.close();
 			process.exit(0);
 		};
 

@@ -168,3 +168,21 @@ test("typed MCP registration runs a compound action and refuses ambiguous target
 		await server.close();
 	}
 });
+
+test("the overall deadline during a final read does not misclassify an observed missing target as an environment failure", async () => {
+	const d = device([[element("Other")]]);
+	let reads = 0;
+	d.robot.getElementsOnScreen = async () => ++reads === 1 ? [element("Other")] : new Promise<ScreenElement[]>(() => {});
+	const result = await d.ui.run("expect", { target: { text: "Missing" }, timeoutMs: 40 });
+	expect(result.ok).toBe(false);
+	expect(result.error?.code).toBe("expectation_failed");
+	expect(result.snapshot?.elements[0].text).toBe("Other");
+});
+
+test("an inner mobilecli text timeout after dispatch is outcome unknown", async () => {
+	const d = device([[element("", { type: "android.widget.EditText" })]]);
+	d.robot.sendKeys = async () => {throw new Error("agent timed out on port 123 after 10s: context deadline exceeded (Client.Timeout exceeded while awaiting headers)");};
+	const result = await d.ui.run("act", { action: "type", target: { role: "textbox" }, text: "hello", timeoutMs: 100 });
+	expect(result.actionSent).toBe(true);
+	expect(result.error?.code).toBe("command_outcome_unknown");
+});
