@@ -10,6 +10,7 @@ export interface ScreenSize extends Dimensions {
 export interface InstalledApp {
 	packageName: string;
 	appName: string;
+	activity?: string;
 }
 
 export type SwipeDirection = "up" | "down" | "left" | "right";

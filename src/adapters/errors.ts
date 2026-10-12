@@ -23,7 +23,7 @@ export const toErrorBody = (err: unknown): ErrorBody => {
 		code = "device_unavailable";
 	}
 
-	if (/failed to dump UI|no XML content|uiautomator dump/i.test(message)) {
+	if (/failed to dump UI|no XML content|uiautomator dump|device server did not start within|agent unreachable/i.test(message)) {
 		code = "ui_unavailable";
 	}
 

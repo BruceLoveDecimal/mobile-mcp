@@ -68,6 +68,7 @@ interface ForegroundAppResponse {
 	data: {
 		packageName: string;
 		appName?: string;
+		activity?: string;
 	};
 }
 
@@ -246,6 +247,7 @@ export class MobileDevice implements Robot {
 		return {
 			appName: response.data.appName || response.data.packageName,
 			packageName: response.data.packageName,
+			...(response.data.activity ? { activity: response.data.activity } : {}),
 		};
 	}
 

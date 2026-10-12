@@ -55,6 +55,8 @@ class DeviceHandle {
 		return this.provider.platform ? this.provider.platform(this.id) : "unknown";
 	}
 
+	async screenSize(): Promise<{ width: number; height: number; scale: number }> { return (await this.robot()).getScreenSize(); }
+
 	async listApps(): Promise<Array<{ packageName: string; appName: string }>> {
 		return (await this.robot()).listApps();
 	}
@@ -103,7 +105,7 @@ class DeviceHandle {
 		await this.pressButton("BACK");
 	}
 
-	async foreground(): Promise<{ packageName: string; appName: string }> {
+	async foreground(): Promise<{ packageName: string; appName: string; activity?: string }> {
 		const robot = await this.robot();
 		if (!robot.getForegroundApp) {
 			throw new CommandError("unsupported", "Reading the foreground app is not supported by this device driver");

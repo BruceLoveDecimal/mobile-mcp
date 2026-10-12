@@ -37,6 +37,7 @@ export const SCREENS = [
     markers: ['Search for anything', 'Talk/Sing'],
     parent: null,
     via: 'launch screen: the Explore tab',
+    open: { resetPoint: { xRatio: 0.125, yRatio: 0.965 } },
     sections: [
       'top bar: "EN" (language), "Search for anything", "PRO"',
       'three entry cards: "Avatar" "Talk/Sing", "Video" "Image to Vid", "Image" "Generate"',

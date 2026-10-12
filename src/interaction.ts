@@ -18,6 +18,8 @@ export interface InteractionParams {
  x?: number;
  y?: number;
  text?: string;
+ /** Trusted adapter secret input: masked length is evidence, not exact character verification. */
+ maskedInput?: boolean;
  submit?: boolean;
  button?: Button;
  direction?: SwipeDirection;
@@ -43,6 +45,7 @@ export interface InteractionResult {
  delivery?: "not_sent" | "dispatched" | "applied" | "unknown";
  controlState?: "verified" | "unverified";
  verified?: boolean;
+ verification?: "exact" | "masked_length";
  actual?: string;
  swipes?: number;
  error?: ErrorBody;
@@ -256,9 +259,15 @@ export class Interaction {
 						if (current) {
 							if (current.foreground?.packageName !== inputPackage) { throw new CommandError("stale_ref", "The foreground app changed during input verification"); }
 							const after = rematch(field!, current.elements);
-							extra.actual = fieldValue(after);
-							extra.verified = extra.actual === desired;
-							if (extra.verified) { extra.controlState = "verified"; extra.matched = [after]; break; }
+							const value = fieldValue(after);
+							extra.actual = params.maskedInput ? "******" : value;
+							extra.verified = value === desired;
+							if (extra.verified) { extra.verification = "exact"; extra.controlState = "verified"; extra.matched = [after]; break; }
+							if (params.maskedInput && typeof value === "string" && /^[•●]+$/.test(value) && Array.from(value).length === Array.from(desired!).length) {
+								extra.verification = "masked_length";
+								extra.controlState = "unverified";
+								extra.matched = [after]; break;
+							}
 						}
 						await pause();
 					}

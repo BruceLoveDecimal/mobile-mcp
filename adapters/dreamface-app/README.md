@@ -14,7 +14,9 @@ The installed 6.34.1 App uses `WebViewJavascriptBridge.getClientUserInfo` and an
 | works, work | read | Recent tasks, status and media URLs |
 | image-models, avatars, voices | read | Generation inputs and models |
 | projects, conversation, agent-models, agent-tools | read | Canvas service queries, if available in the App environment |
-| ai-image, ai-video, avatar-video | write | Submit once, poll status and return media; may spend credits |
+| ai-image, avatar-video | write | App identity with the web-generation service; submit once and return media |
+| ai-video, video-submit | write | Native startSynthesizing bridge; submit once, persist task_handle; ai-video waits |
+| video-task | read | Recover the exact native task after timeout, navigation, client restart or reconnection |
 | agent-chat, agent-image, agent-video | write | Canvas stream through the App HTTP client; preflight validates the available model, then creates one project and reads the final conversation/media |
 
 Write requests are never retried after gateway errors or ambiguous timeouts. A timeout cannot prove a task failed: inspect `works` / `work` before submitting again. Remote generation can continue after client cancellation. API results validate the generation service; use native screen assertions/screenshots as additional evidence when a case concerns the App UI or playback.
@@ -28,3 +30,13 @@ No assumption is made that Web and App have the same account, backend, works or 
 `sitemap` returns the screen tree, traps and command paths from `_sitemap.js`. `open {screen}` walks this map through deep links and taps, waiting for page markers. Native screen reads remain available as `credits-ui` and `image-models-ui`.
 
 When refreshing the map, record only observed controls and navigation. Never infer a working generation from a click acknowledgment, progress bar or empty result tiles. Do not submit/pay/delete while collecting navigation data unless the user explicitly requests that scenario.
+
+## Native video recovery
+
+`video-submit` reads the installed H5 model configuration, validates the duration/resolution, and dispatches one `startSynthesizing` call. The native PhotoProcessActivity owns quota handling, signing and generation. A unique work name and identity-bound `task_handle` correlate the result. The bridge callback can be empty or delayed while H5 is backgrounded: the returned `unconfirmed` status proves neither acceptance nor failure.
+
+`video-task {task_handle, timeout_sec:0}` reads once; a positive timeout waits. It queries native `work_v5/get_work_list` through `httpsRequest`, whose App network stack signs the request. It never borrows a Web token or the Web creation list. Native history publishes completed works; until the exact marked work has a video URL the adapter reports unconfirmed, including cases where the native pipeline failed before publishing. A wait expiration returns `task_pending` with the same handle. Never replay the submission to recover it.
+
+The handle survives client shutdown and page loss. Querying reopens the AI Video H5 when needed. Navigation launches the existing task, recognizes the current page and follows only the remaining path; restart remains explicit. The opaque Profile fallback uses actual device dimensions and the verified MainActivity. Known Android ANR dialogs fail as `ui_unavailable` instead of navigation retries.
+
+Fresh host login uses `fillSecret` for the App password field because Android reports only bullet characters. The masked length is an input observation, not proof of the secret value or successful login. The adapter submits Continue once and verifies the account email before restoring Home. A wrong password, short paste or human verification request remains a failure/wait; no password is unmasked and no input write is retried.

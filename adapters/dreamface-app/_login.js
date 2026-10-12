@@ -31,16 +31,21 @@ export async function openSettings({ device, screen }, waitMs) {
     }
     const snap = await screen.snapshot();
     if (snap.byText('Function Setting', exact)) return snap;
+    if (snap.byTestId('menuLogout')) { await device.back(); continue; }
     const close = snap.byTestId('ivClose');
     const profile = snap.byText('Profile', exact);
     if (close) {
       await snap.tap(close); // the subscription page opened on launch
     } else if (profile && profileTaps < 2) {
-      const { width, height } = snap.size;
+      const { width, height } = await device.screenSize();
       await snap.tap(profile);
       await sleep(2500);
       await screen.tap(Math.round(width * 0.935), Math.round(height * 0.0525));
       await sleep(2000);
+      profileTaps++;
+    } else if (foreground?.packageName === pkg && foreground.activity?.endsWith('.MainActivity') && snap.texts.length < 6 && profileTaps === 0) {
+      const { width, height } = await device.screenSize();
+      await screen.tap(Math.round(width * 0.935), Math.round(height * 0.0525));
       profileTaps++;
     } else if (++blank >= 2 || profileTaps >= 2) {
       await device.back();
@@ -86,4 +91,17 @@ export async function logOut({ screen }, account, waitMs = 30_000) {
     await sleep(1000);
   }
   throw errors.expectation('the "Log out your account?" confirmation did not appear');
+}
+
+/** The Settings account row can still show Log in briefly after successful native authentication. */
+export async function waitForSignedInSettings({ screen, signal }, current, waitMs = 30000) {
+  const deadline = Date.now() + waitMs;
+  let snap = current;
+  for (;;) {
+    signal?.throwIfAborted();
+    if (snap.ok && snap.byTestId('menuLogin') && snap.byText('Function Setting', exact) && !isGuest(snap)) return snap;
+    if (Date.now() >= deadline) throw errors.expectation('the App account did not become signed in after submission');
+    await sleep(Math.min(1000, Math.max(1, deadline - Date.now())));
+    snap = await screen.snapshot();
+  }
 }

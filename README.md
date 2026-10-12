@@ -76,7 +76,7 @@ These tools use one per-device lock across locating, writing and asserting. They
 
 Results contain `ok`, the decisive `snapshot`, optional `matched`, an `error.code` on failure, and `metrics.reads`/`elapsedMs`. `delivery` distinguishes dispatch from an unknown outcome; `controlState` distinguishes verified controls from business completion. Ref-based actions require the observed `snapshotId`, rematch the component by type/id/label/name and ancestor context, check foreground app/window when available, and use its current bounds. Unrelated changes and dump renumbering do not invalidate a unique target. Duplicate or repurposed targets fail closed. Offscreen targets and overlapping independent actionable controls are refused; native dumps do not prove arbitrary visual occlusion, so overlays without accessible nodes may still require screenshots.
 
-`fill` replaces the entire editable field, `clear` empties it, and `type` appends. Every input reads back the complete value, returning `verified` and `actual`; a mismatch fails without sending the text again. The mobilecli driver uses bulk clipboard paste instead of per-character ASCII injection and restores the prior private clipboard. Password readback must be redacted by the host. Adapter API 4 changes `Locator.fill` to replacement with verification and adds `Locator.type` for append.
+`fill` replaces the entire editable field, `clear` empties it, and `type` appends. Every input reads back the complete value, returning `verified` and `actual`; a mismatch fails without sending the text again. The mobilecli driver uses bulk clipboard paste instead of per-character ASCII injection and restores the prior private clipboard. Password readback must be redacted by the host. Adapter API 4 changes `Locator.fill` to replacement with verification and adds `Locator.type` for append. API 5 adds `device.screenSize()` and preserves foreground Activity for safe navigation recovery.
 
 ## Android App WebViews
 
@@ -606,3 +606,9 @@ collection, usage, retention, and contact information.
 HTTPS capture uses Node WebCrypto for RSA signing and `@peculiar/x509` for certificate encoding. Existing PEM CA keys and certificates are loaded without replacement; their fingerprints and Android certificate file hashes remain stable. Incomplete or mismatched pairs are rejected rather than silently replacing device trust. Certificate generation is asynchronous and TLS contexts are cached per host.
 
 Fork CI runs dependency audit, lint, build and unit/protocol tests on hosted runners. Device tests require the upstream self-hosted runner; real App smoke results are recorded separately.
+
+### Android capture reconnection
+
+An active capture checks its owned adb route every five seconds. After transport recovery it resolves the same device/AVD, restores its original proxy port and keeps existing capture entries. Repeated capture start repairs the route without recreating the proxy. Stop aborts repair before restoring the original system proxy. This does not replay App actions or generation requests. Unresponsive UI reads return `ui_unavailable`; the caller must restore device readiness.
+
+Capture forwarding uses `MOBILE_MCP_UPSTREAM_PROXY` first, then `https_proxy` / `HTTPS_PROXY` / `http_proxy` / `HTTP_PROXY`. HTTP and HTTPS upstream proxies are supported, including CONNECT and decrypted HTTPS. `no_proxy` / `NO_PROXY` excludes destinations; localhost and loopback always remain direct. Configured upstream failures remain failures: the capture does not silently retry a write over a direct route. Upstream proxy credentials are not included in capture results.

@@ -35,8 +35,9 @@ export class NetworkCaptures {
 	private readonly proxies = new Map<string, CaptureProxy>();
 	private ca?: CertificateAuthority;
 	private hooked = false;
+	private readonly reconnectors = new Map<string, { stopped: boolean; controller: AbortController; timer?: NodeJS.Timeout; pending?: Promise<void> }>();
 
-	constructor(private readonly control: DeviceProxyControl = new AdbProxyControl(), private readonly dir: string = defaultNetworkDir()) {}
+	constructor(private readonly control: DeviceProxyControl = new AdbProxyControl(), private readonly dir: string = defaultNetworkDir(), private readonly reconnectIntervalMs = 5000) {}
 
 	get(deviceId: string): CaptureProxy | undefined {
 		return this.proxies.get(deviceId);
@@ -55,6 +56,7 @@ export class NetworkCaptures {
 		const running = this.proxies.get(deviceId);
 		if (running) {
 			if (running.decryptHttps === Boolean(options.decryptHttps)) {
+				this.control.enable(deviceId, running.port);
 				return this.describe(deviceId, running, undefined);
 			}
 
@@ -68,7 +70,10 @@ export class NetworkCaptures {
 			installed = this.control.installCa(deviceId, ca.certPem, ca.androidHash);
 		}
 
-		const proxy = new CaptureProxy({ decryptHttps: options.decryptHttps, ca });
+		const proxy = new CaptureProxy({ decryptHttps: options.decryptHttps, ca,
+			upstreamProxy: process.env.MOBILE_MCP_UPSTREAM_PROXY || process.env.https_proxy || process.env.HTTPS_PROXY || process.env.http_proxy || process.env.HTTP_PROXY,
+			noProxy: process.env.no_proxy || process.env.NO_PROXY,
+		});
 		const port = await proxy.start();
 		try {
 			this.control.enable(deviceId, port);
@@ -78,6 +83,7 @@ export class NetworkCaptures {
 		}
 
 		this.proxies.set(deviceId, proxy);
+		this.watch(deviceId, proxy);
 		this.hook();
 		return this.describe(deviceId, proxy, installed);
 	}
@@ -89,9 +95,28 @@ export class NetworkCaptures {
 		}
 
 		this.proxies.delete(deviceId);
+		const watcher = this.reconnectors.get(deviceId);
+		if (watcher) {
+			watcher.stopped = true; watcher.controller.abort(); clearTimeout(watcher.timer); this.reconnectors.delete(deviceId);
+			await watcher.pending;
+		}
 		this.control.disable(deviceId, proxy.port);
 		await proxy.stop();
 		return true;
+	}
+
+	private watch(deviceId: string, proxy: CaptureProxy): void {
+		if (!this.control.reconnect) {return;}
+		const state: { stopped: boolean; controller: AbortController; timer?: NodeJS.Timeout; pending?: Promise<void> } = { stopped: false, controller: new AbortController() };
+		this.reconnectors.set(deviceId, state);
+		const schedule = () => {
+			if (state.stopped) {return;}
+			state.timer = setTimeout(() => {
+				state.pending = this.control.reconnect!(deviceId, proxy.port, state.controller.signal).catch(() => {}).finally(schedule);
+			}, this.reconnectIntervalMs);
+			state.timer.unref();
+		};
+		schedule();
 	}
 
 	async stopAll(): Promise<void> {
@@ -145,6 +170,7 @@ export class NetworkCaptures {
 
 		this.hooked = true;
 		const restore = () => {
+			for (const watcher of this.reconnectors.values()) { watcher.stopped = true; watcher.controller.abort(); clearTimeout(watcher.timer); }
 			for (const [deviceId, proxy] of this.proxies) {
 				this.proxies.delete(deviceId);
 				this.control.disable(deviceId, proxy.port);
@@ -152,10 +178,7 @@ export class NetworkCaptures {
 		};
 		process.once("exit", restore);
 		for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-			process.once(signal, () => {
-				restore();
-				process.exit(0);
-			});
+			process.once(signal, () => { void this.stopAll().finally(() => process.exit(0)); });
 		}
 	}
 }
