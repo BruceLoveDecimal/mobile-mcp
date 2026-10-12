@@ -1,7 +1,7 @@
 // Inspect debug-enabled Android WebViews in the owning app process. Forwarding and CDP are engine concerns;
 // adapters borrow a page without navigating it or exporting its authentication to the caller.
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { getAdbPath } from "./android";
 import { CommandError } from "./adapters/errors";
@@ -15,8 +15,9 @@ export interface WebviewTarget {
 	socket: string;
 }
 interface Endpoint extends WebviewTarget { serial: string; port: number; websocket: string }
-interface AXNode {
+export interface AXNode {
 	nodeId: string; parentId?: string; childIds?: string[]; ignored?: boolean;
+	backendDOMNodeId?: number;
 	role?: { value?: string }; name?: { value?: string }; value?: { value?: unknown };
 	properties?: Array<{ name: string; value: { value?: unknown } }>;
 }
@@ -42,7 +43,7 @@ const safeUrl = (raw: string): string => {
 };
 
 /** Preserve parent/child context and roles; passwords never appear in observations. */
-export function describeAX(nodes: AXNode[], maxChars: number): Pick<WebviewSnapshot, "state" | "text" | "truncated"> {
+export function describeAX(nodes: AXNode[], maxChars: number, onRef?: (node: AXNode, ref: string) => void): Pick<WebviewSnapshot, "state" | "text" | "truncated"> {
 	const byId = new Map(nodes.map(node => [node.nodeId, node]));
 	const lines: string[] = [];
 	const texts: string[] = [];
@@ -57,7 +58,9 @@ export function describeAX(nodes: AXNode[], maxChars: number): Pick<WebviewSnaps
 		const password = Boolean(properties.protected) || role === "textbox" && /password|密码/i.test(name);
 		const value = password ? "******" : node.value?.value;
 		if (!node.ignored) {
-			lines.push(`${"  ".repeat(Math.min(depth, 40))}- ${role}${name ? ` ${JSON.stringify(name)}` : ""} [ref=w${++sequence}]${value !== undefined ? ` value=${JSON.stringify(value)}` : ""}${properties.disabled ? " [disabled]" : ""}${properties.selected ? " [selected]" : ""}`);
+			const ref = `w${++sequence}`;
+			onRef?.(node, ref);
+			lines.push(`${"  ".repeat(Math.min(depth, 40))}- ${role}${name ? ` ${JSON.stringify(name)}` : ""} [ref=${ref}]${value !== undefined ? ` value=${JSON.stringify(value)}` : ""}${properties.disabled ? " [disabled]" : ""}${properties.selected ? " [selected]" : ""}`);
 			if (name && role !== "RootWebArea" && !password && texts[texts.length - 1] !== name) { texts.push(name); }
 			if (value !== undefined && !password && value !== name) { texts.push(String(value)); }
 		}
@@ -122,12 +125,12 @@ export class CdpPage {
 			this.socket.send(JSON.stringify({ id, method, params }), error => { if (error) { finish(new CommandError("webview_closed", "WebView disconnected")); } });
 		});
 	}
-	async observe(maxChars = 20000): Promise<WebviewSnapshot> {
+	async observe(maxChars = 20000, onRef?: (node: AXNode, ref: string) => void): Promise<WebviewSnapshot> {
 		const result = await this.send("Accessibility.getFullAXTree");
-		const description = describeAX(result.nodes ?? [], maxChars);
+		const description = describeAX(result.nodes ?? [], maxChars, onRef);
 		const { device, packageName, id, title, url, socket } = this.target;
 		const target = { device, packageName, id, title, url: safeUrl(url), socket };
-		return { id: `W${createHash("sha256").update(JSON.stringify([id, description])).digest("hex").slice(0, 12)}`, target, capturedAt: new Date().toISOString(), ...description };
+		return { id: `W${randomUUID().replaceAll("-", "").slice(0, 16)}`, target, capturedAt: new Date().toISOString(), ...description };
 	}
 	/** Trusted adapter SDK only. No arbitrary JavaScript MCP tool is exposed. */
 	async evaluate(expression: string, options: { timeoutMs?: number; allowWrite?: boolean } = {}): Promise<any> {

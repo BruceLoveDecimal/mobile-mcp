@@ -75,6 +75,13 @@ class FakeRobot implements Robot {
 
 	async sendKeys(text: string) {
 		this.typed.push(text);
+		const field = this.screen.find(e => /textfield|edittext/i.test(e.type));
+		if (field) { field.value = (field.value ?? "") + text; }
+	}
+	async fillText(text: string) {
+		this.typed.push(text);
+		const field = this.screen.find(e => /textfield|edittext/i.test(e.type));
+		if (field) { field.value = text; }
 	}
 
 	async pressButton() {}
@@ -451,7 +458,7 @@ test("apps_search lists apps and finds commands; app_run returns JSON and isErro
 	expect(tools).toEqual(expect.arrayContaining(["apps_search", "app_run"]));
 
 	const list = await callJson(client, "apps_search", {});
-	expect(list.body.adapterApi).toBe(3);
+	expect(list.body.adapterApi).toBe(4);
 	expect(list.body.apps).toEqual([expect.objectContaining({ app: "dreamface-app", packages: ["com.dreamapp.dubhe"] })]);
 
 	const found = await callJson(client, "apps_search", { query: "dreamface sitemap" });

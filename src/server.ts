@@ -25,6 +25,7 @@ import { DeviceLocks } from "./adapters/device-lock";
 import { Source } from "./adapters/types";
 import { NetworkCaptures } from "./network/captures";
 import { Webviews } from "./webview";
+import { registerWebviewActions } from "./webview-tools";
 import { toErrorBody } from "./adapters/errors";
 
 type ScreenshotContent = { type: "text", text: string } | { type: "image", data: string, mimeType: string };
@@ -147,21 +148,22 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 	// calls on one device run one at a time, so an app_run flow is never interleaved with other taps
 	const deviceLocks = new DeviceLocks();
 	const webviews = options.webviews ?? new Webviews();
+	const webviewUi = registerWebviewActions(server, webviews, deviceLocks);
 	const close = server.close.bind(server);
 	server.close = async () => { await webviews.close(); await close(); };
 	server.registerTool("mobile_webview", {
 		title: "Inspect App WebView",
-		description: "Discover debug-enabled WebViews belonging to one Android app, or read a chosen page's accessibility hierarchy and rendered text. Never navigates, launches a browser or reads another app's session. No pages means unavailable, not a native UI failure. wN refs are observation-only; native action refs remain @eN.",
+		description: "Discover debug-enabled WebViews belonging to one Android app, or read a chosen page's accessibility hierarchy and rendered text. Never launches a browser or reads another app's session. Use its wN refs and snapshotId with mobile_webview_action; native refs remain @eN.",
 		inputSchema: z.object({ device: z.string(), packageName: z.string(), action: z.enum(["list", "observe", "read"]).default("list"), pageId: z.string().optional(), maxChars: z.number().int().min(200).max(100000).default(20000) }).strict(),
 		annotations: { readOnlyHint: true, openWorldHint: true },
 	}, async ({ device, packageName, action, pageId, maxChars }, ctx: any) => {
 		try {
 			const value = await deviceLocks.run<unknown>(device, () => action === "list"
 				? webviews.list(device, packageName, ctx?.mcpReq?.signal)
-				: webviews.withPage(device, packageName, pageId, async page => {
-					const snapshot = await page.observe(maxChars);
+				: (async () => {
+					const snapshot = await webviewUi.observe(device, packageName, pageId, maxChars, ctx?.mcpReq?.signal);
 					return action === "read" ? { ...snapshot, state: undefined } : snapshot;
-				}, ctx?.mcpReq?.signal));
+				})());
 			return { content: [{ type: "text" as const, text: JSON.stringify({ ok: true, device, packageName, ...(action === "list" ? { supported: (value as unknown[]).length > 0, pages: value } : { snapshot: value }) }) }] };
 		} catch (error) { return { content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: toErrorBody(error) }) }], isError: true }; }
 	});
@@ -302,7 +304,7 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 		if (!response.data?.devices?.some(device => device.id === deviceId && device.state === "online")) {
 			throw new ActionableError(`Device "${deviceId}" not found. Semantic UI tools require an online Android device.`);
 		}
-		const robot = new MobileDevice(deviceId);
+		const robot = new MobileDevice(deviceId, "android");
 		robotCache.set(deviceId, robot);
 		devicePlatforms.set(deviceId, "android");
 		return robot;
@@ -355,7 +357,7 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 					}
 
 					devicePlatforms.set(deviceId, device.platform);
-					return new MobileDevice(deviceId);
+					return new MobileDevice(deviceId, device.platform);
 				}
 			}
 		}

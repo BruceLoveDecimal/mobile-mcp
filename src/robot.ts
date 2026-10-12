@@ -40,6 +40,13 @@ export interface ScreenElement {
 	selected?: boolean;
 	checked?: boolean;
 	enabled?: boolean;
+	/** Owning window and ancestor identities, when supplied by the device dump. */
+	windowId?: string;
+	context?: string[];
+	ancestorRefs?: string[];
+	visible?: boolean;
+	clickable?: boolean;
+	editable?: boolean;
 }
 
 export class ActionableError extends Error {
@@ -64,6 +71,8 @@ export interface CommandContext {
 }
 
 export interface Robot {
+	/** Replace the focused field in one operation; never emulate fill by appending. */
+	fillText?(text: string): Promise<void>;
 	/** Bound all subprocesses in a compound UI operation, including cancellation. */
 	withCommandContext?<T>(context: CommandContext, run: () => Promise<T>): Promise<T>;
 

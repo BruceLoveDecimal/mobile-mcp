@@ -3,6 +3,7 @@
 // The surface follows mobilewright's Screen/Locator so adapters read like Playwright tests.
 import { Robot, ScreenElement, SwipeDirection } from "../robot";
 import { CommandError } from "./errors";
+import { Interaction } from "../interaction";
 
 export const DEFAULT_WAIT_MS = 10_000;
 const POLL_MS = 300;
@@ -123,7 +124,7 @@ const idMatches = (e: ScreenElement, id: string): boolean =>
 export class ScreenDriver {
 	defaultTimeout = DEFAULT_WAIT_MS;
 
-	constructor(private getRobot: () => Promise<Robot>, private signal?: AbortSignal) {}
+	constructor(private getRobot: () => Promise<Robot>, readonly signal?: AbortSignal) {}
 
 	robot(): Promise<Robot> {
 		return this.getRobot();
@@ -289,8 +290,30 @@ export class Locator {
 	}
 
 	async fill(text: string, opts: WaitOptions = {}): Promise<void> {
-		await this.tap(opts);
-		await (await this.driver.robot()).sendKeys(text);
+		await this.input("fill", text, opts);
+	}
+
+	async type(text: string, opts: WaitOptions = {}): Promise<void> {
+		await this.input("type", text, opts);
+	}
+
+	private async input(action: "fill" | "type", text: string, opts: WaitOptions): Promise<void> {
+		const started = Date.now();
+		const timeout = opts.timeout ?? 30000;
+		await this.element({ timeout });
+		const ui = new Interaction(() => this.driver.robot());
+		const observation = await ui.run("observe", { timeoutMs: Math.max(1, timeout - (Date.now() - started)) }, this.driver.signal);
+		if (!observation.ok || !observation.snapshot) { throw new CommandError(observation.error!.code, observation.error!.message); }
+		const e = this.resolveIn(observation.snapshot.elements)[0];
+		if (!e) { throw new CommandError("element_not_found", `${this.description} is not on screen`); }
+		const remaining = timeout - (Date.now() - started);
+		if (remaining <= 0) { throw new CommandError("timeout", "Input deadline expired before dispatch"); }
+		const result = await ui.run("act", {
+			action, text, ...(e.ref ? { ref: e.ref, snapshotId: observation.snapshot.id } : {
+				target: { role: roleOf(e), ...(e.identifier ? { id: e.identifier } : {}), ...(e.label ? { label: e.label, exact: true } : {}) },
+			}), timeoutMs: remaining,
+		}, this.driver.signal);
+		if (!result.ok) { throw new CommandError(result.error!.code, result.error!.message, result.error!.hint); }
 	}
 }
 

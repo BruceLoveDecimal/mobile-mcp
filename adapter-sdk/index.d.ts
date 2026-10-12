@@ -40,6 +40,12 @@ export interface ScreenElement {
   selected?: boolean;
   checked?: boolean;
   enabled?: boolean;
+  windowId?: string;
+  context?: string[];
+  ancestorRefs?: string[];
+  visible?: boolean;
+  clickable?: boolean;
+  editable?: boolean;
 }
 
 export type Role = "button" | "textbox" | "text" | "image" | "switch" | "checkbox" | "radio" | "cell" | (string & {});
@@ -82,8 +88,10 @@ export interface Locator {
   text(opts?: WaitOptions): Promise<string>;
   tap(opts?: WaitOptions): Promise<void>;
   longPress(opts?: WaitOptions & { duration?: number }): Promise<void>;
-  /** Tap to focus, then type. Does not clear what the field already holds. */
+  /** Replace the entire field and read back its value; throws on mismatch. */
   fill(text: string, opts?: WaitOptions): Promise<void>;
+  /** Append to the field and read back its value; throws on mismatch. */
+  type(text: string, opts?: WaitOptions): Promise<void>;
   readonly description: string;
 }
 
