@@ -13,7 +13,7 @@
  * certificate store, which apps that trust user CAs accept after a restart. The system store is left alone.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { getAdbPath } from "../android";
 
 const ADB_TIMEOUT = 30_000;
@@ -29,11 +29,13 @@ export interface DeviceProxyControl {
 	disable(deviceId: string, port: number): void;
 	/** Put the CA certificate on the device; returns where it ended up. */
 	installCa(deviceId: string, pem: string, hashName: string): CaInstall;
+	/** Repair owned routing after an adb reconnect without replacing the capture. */
+	reconnect?(deviceId: string, port: number, signal?: AbortSignal): Promise<void>;
 }
 
 export class AdbProxyControl implements DeviceProxyControl {
 	private readonly serials = new Map<string, string>();
-	/** The `http_proxy` setting before capture, per serial, to put back. */
+	/** Preserve the original proxy by stable device id even when an AVD changes adb serial. */
 	private readonly previous = new Map<string, string>();
 
 	private adb(serial: string, ...args: string[]): string {
@@ -78,13 +80,39 @@ export class AdbProxyControl implements DeviceProxyControl {
 	enable(deviceId: string, port: number): string {
 		const serial = this.resolveSerial(deviceId);
 		const current = this.adb(serial, "shell", "settings", "get", "global", "http_proxy");
-		if (!this.previous.has(serial)) {
-			this.previous.set(serial, current);
+		if (!this.previous.has(deviceId)) {
+			this.previous.set(deviceId, current);
 		}
 
 		this.adb(serial, "reverse", `tcp:${port}`, `tcp:${port}`);
 		this.adb(serial, "shell", "settings", "put", "global", "http_proxy", `127.0.0.1:${port}`);
 		return serial;
+	}
+
+	async reconnect(deviceId: string, port: number, signal?: AbortSignal): Promise<void> {
+		const run = (args: string[]): Promise<string> => new Promise((resolve, reject) => {
+			execFile(getAdbPath(), args, { timeout: 3000, encoding: "utf8", signal }, (error, stdout) => error ? reject(error) : resolve(stdout.trim()));
+		});
+		const devices = (await run(["devices"])).split("\n").slice(1).filter(line => line.trim().endsWith("device")).map(line => line.split(/\s+/)[0]);
+		let serial = this.serials.get(deviceId);
+		if (serial?.startsWith("emulator-") && serial !== deviceId && devices.includes(serial) && await run(["-s", serial, "shell", "getprop", "ro.boot.qemu.avd_name"]) !== deviceId) {
+			serial = undefined;
+		}
+		if (!serial || !devices.includes(serial)) {
+			serial = devices.find(s => s === deviceId);
+			for (const candidate of devices.filter(s => s.startsWith("emulator-"))) {
+				if (serial) {break;}
+				if (await run(["-s", candidate, "shell", "getprop", "ro.boot.qemu.avd_name"]) === deviceId) {serial = candidate;}
+			}
+			if (!serial) {throw new Error("The capture device is offline");}
+			this.serials.set(deviceId, serial);
+		}
+		const reverse = await run(["-s", serial, "reverse", "--list"]);
+		const proxy = await run(["-s", serial, "shell", "settings", "get", "global", "http_proxy"]);
+		if (!reverse.split("\n").some(line => line.trim().split(/\s+/).slice(-2).join(" ") === `tcp:${port} tcp:${port}`)) {
+			await run(["-s", serial, "reverse", `tcp:${port}`, `tcp:${port}`]);
+		}
+		if (proxy !== `127.0.0.1:${port}`) {await run(["-s", serial, "shell", "settings", "put", "global", "http_proxy", `127.0.0.1:${port}`]);}
 	}
 
 	disable(deviceId: string, port: number): void {
@@ -95,8 +123,8 @@ export class AdbProxyControl implements DeviceProxyControl {
 			return;
 		}
 
-		const previous = this.previous.get(serial);
-		this.previous.delete(serial);
+		const previous = this.previous.get(deviceId);
+		this.previous.delete(deviceId);
 		// ":0" is how Android spells "no proxy"; "null" is what `settings get` prints when it was never set.
 		const restore = previous && previous !== "null" ? previous : ":0";
 		try {

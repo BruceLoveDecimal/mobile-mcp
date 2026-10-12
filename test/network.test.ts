@@ -226,7 +226,7 @@ test("network_capture and network_inspect tools drive one capture per device", a
 		// idempotent while the mode is unchanged
 		const again = JSON.parse((await call("network_capture", { device: "qa-pixel", action: "start" })).text);
 		expect(again.port).toBe(started.port);
-		expect(control.log).toHaveLength(1);
+		expect(control.log).toHaveLength(2);
 
 		const upstream = http.createServer(echoHandler);
 		const upstreamPort = await listen(upstream);
@@ -247,7 +247,7 @@ test("network_capture and network_inspect tools drive one capture per device", a
 		expect(decrypting.decryptHttps).toBe(true);
 		expect(decrypting.ca.installed).toBe("exported");
 		expect(decrypting.ca.hint).toContain("Settings");
-		expect(control.log.slice(1)).toEqual([
+		expect(control.log.slice(2)).toEqual([
 			`disable qa-pixel ${started.port}`,
 			expect.stringMatching(/^installCa qa-pixel [0-9a-f]{8} true$/),
 			`enable qa-pixel ${decrypting.port}`,
@@ -302,4 +302,118 @@ test("incomplete or mismatched CA files are rejected without replacing installed
 	fs.copyFileSync(path.join(other.dir, "ca.key.pem"), path.join(dir, "ca.key.pem"));
 	await expect(CertificateAuthority.load(dir)).rejects.toThrow("Invalid network capture CA");
 	expect(fs.readFileSync(path.join(dir, "ca.cert.pem"), "utf8")).toBe(fixture.cert);
+});
+
+
+test("a repeated capture start repairs device routing while preserving captured traffic", async () => {
+	const control = new FakeControl();
+	const captures = new NetworkCaptures(control, tmpDir("mobile-mcp-reconnect-"));
+	try {
+		const first = await captures.start("device");
+		const second = await captures.start("device");
+		expect(second.port).toBe(first.port);
+		expect(control.log.filter(line => line.startsWith("enable"))).toHaveLength(2);
+	} finally { await captures.stopAll(); }
+});
+
+
+test("capture reconnects after device downtime and stops repairing before proxy restoration", async () => {
+	const control = new FakeControl();
+	let online = false, repairs = 0, attempts = 0;
+	Object.assign(control, { reconnect: async () => {
+		attempts++; if (!online) {throw new Error("offline");} repairs++;
+	} });
+	const captures = new NetworkCaptures(control, tmpDir("mobile-mcp-repair-"), 5);
+	await captures.start("device");
+	await expect.poll(() => attempts).toBeGreaterThan(0);
+	online = true;
+	await expect.poll(() => repairs).toBeGreaterThan(0);
+	await captures.stopAll();
+	const final = attempts;
+	await new Promise(resolve => setTimeout(resolve, 30));
+	expect(attempts).toBe(final);
+});
+
+test("capture tunnels through a configured upstream proxy instead of resolving the remote host locally", async () => {
+	const serverCa = await CertificateAuthority.load(tmpDir("mobile-mcp-upstream-ca-"));
+	const target = https.createServer({ SNICallback: (name, cb) => { void serverCa.contextFor(name).then(context => cb(null, context), cb); } }, echoHandler);
+	const targetPort = await listen(target);
+	const destinations: string[] = [];
+	const sockets = new Set<net.Socket>();
+	const outer = http.createServer();
+	outer.on("connect", (req, client, head) => {
+		destinations.push(req.url || "");
+		const upstream = net.connect(targetPort, "127.0.0.1", () => {
+			client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+			if (head.length) {upstream.write(head);}
+			client.pipe(upstream); upstream.pipe(client);
+		});
+		sockets.add(client as net.Socket); sockets.add(upstream);
+		client.on("error", () => upstream.destroy()); upstream.on("error", () => client.destroy());
+	});
+	const outerPort = await listen(outer);
+	const capture = new CaptureProxy({ upstreamProxy: `http://127.0.0.1:${outerPort}` });
+	try {
+		const port = await capture.start();
+		const socket = await connectTls(port, "media.invalid", 443, serverCa.certPem);
+		const response = await request(socket, "GET /clip HTTP/1.1\r\nHost: media.invalid\r\nConnection: close\r\n\r\n");
+		expect(response).toContain('"path":"/clip"');
+		expect(destinations).toEqual(["media.invalid:443"]);
+		expect(capture.list().entries[0]).toMatchObject({ method: "CONNECT", status: 200 });
+		const clientCa = await CertificateAuthority.load(tmpDir("mobile-mcp-upstream-client-ca-"));
+		const decrypting = new CaptureProxy({ upstreamProxy: `http://127.0.0.1:${outerPort}`, decryptHttps: true, ca: clientCa, upstreamCa: [serverCa.certPem] });
+		try {
+			const decryptPort = await decrypting.start();
+			const decrypted = await connectTls(decryptPort, "media.invalid", 443, clientCa.certPem);
+			const result = await request(decrypted, "GET /decoded HTTP/1.1\r\nHost: media.invalid\r\nConnection: close\r\n\r\n");
+			expect(result).toContain('"path":"/decoded"');
+			expect(destinations).toEqual(["media.invalid:443", "media.invalid:443"]);
+		} finally { await decrypting.stop(); }
+
+	} finally {
+		await capture.stop(); for (const socket of sockets) {socket.destroy();}
+		await new Promise<void>(resolve => outer.close(() => resolve()));
+		await new Promise<void>(resolve => target.close(() => resolve()));
+	}
+});
+
+test("loopback capture stays direct even when an upstream proxy is configured", async () => {
+	const target = http.createServer(echoHandler);
+	const port = await listen(target);
+	const capture = new CaptureProxy({ upstreamProxy: "http://127.0.0.1:1" });
+	try {
+		const proxyPort = await capture.start();
+		expect((await viaProxy(proxyPort, `http://127.0.0.1:${port}/local`)).status).toBe(200);
+	} finally { await capture.stop(); await new Promise<void>(resolve => target.close(() => resolve())); }
+});
+
+test("a client reset during upstream CONNECT setup does not crash the capture server", async () => {
+	const sockets = new Set<net.Socket>();
+	const outer = http.createServer();
+	outer.on("connect", (_req, socket) => {
+		sockets.add(socket as net.Socket); socket.on("error", () => {});
+		setTimeout(() => {
+			if (!socket.destroyed) {socket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");}
+		}, 40);
+	});
+	const outerPort = await listen(outer);
+	const capture = new CaptureProxy({ upstreamProxy: `http://127.0.0.1:${outerPort}` });
+	const target = http.createServer(echoHandler);
+	const targetPort = await listen(target);
+	try {
+		const port = await capture.start();
+		await new Promise<void>(resolve => {
+			const client = net.connect(port, "127.0.0.1", () => {
+				client.write("CONNECT reset.invalid:443 HTTP/1.1\r\nHost: reset.invalid:443\r\n\r\n");
+				setTimeout(() => { client.resetAndDestroy(); resolve(); }, 15);
+			});
+			client.on("error", () => {});
+		});
+		await settled(() => capture.list().entries[0]?.completed === true);
+		expect((await viaProxy(port, `http://127.0.0.1:${targetPort}/still-alive`)).status).toBe(200);
+	} finally {
+		await capture.stop(); for (const socket of sockets) {socket.destroy();}
+		await new Promise<void>(resolve => outer.close(() => resolve()));
+		await new Promise<void>(resolve => target.close(() => resolve()));
+	}
 });

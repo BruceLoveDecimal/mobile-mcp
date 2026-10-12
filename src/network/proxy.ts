@@ -18,6 +18,7 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import tls from "node:tls";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import { CertificateAuthority } from "./ca";
 
 export interface NetworkEntry {
@@ -46,6 +47,10 @@ export interface NetworkEntry {
 }
 
 export interface ProxyOptions {
+	/** An HTTP(S) upstream proxy for networks that cannot reach App/CDN endpoints directly. */
+	upstreamProxy?: string;
+	/** Destinations kept direct (NO_PROXY syntax). */
+	noProxy?: string;
 	/** Terminate TLS with certificates from `ca` and record HTTPS requests in full. */
 	decryptHttps?: boolean;
 	ca?: CertificateAuthority;
@@ -189,6 +194,7 @@ export class CaptureProxy {
 	private readonly inner: http.Server;
 	private readonly entries: NetworkEntry[] = [];
 	private readonly sockets = new Set<net.Socket>();
+	private readonly upstreamAgents = new Map<string, HttpsProxyAgent<string>>();
 	private seq = 0;
 	private counter = 0;
 	port = 0;
@@ -196,6 +202,7 @@ export class CaptureProxy {
 	readonly decryptHttps: boolean;
 
 	constructor(private readonly options: ProxyOptions = {}) {
+		if (options.upstreamProxy && !["http:", "https:"].includes(new URL(options.upstreamProxy).protocol)) {throw new Error("Capture upstream proxy must use HTTP or HTTPS");}
 		this.decryptHttps = Boolean(options.decryptHttps && options.ca);
 		this.server = http.createServer((req, res) => this.onRequest(req, res));
 		this.server.on("connect", (req, socket, head) => this.onConnect(req, socket as net.Socket, head));
@@ -220,6 +227,8 @@ export class CaptureProxy {
 	}
 
 	async stop(): Promise<void> {
+		for (const agent of this.upstreamAgents.values()) {agent.destroy();}
+		this.upstreamAgents.clear();
 		for (const socket of this.sockets) {
 			socket.destroy();
 		}
@@ -262,6 +271,9 @@ export class CaptureProxy {
 	}
 
 	private track(socket: net.Socket): void {
+		if (this.sockets.has(socket)) {return;}
+		// A remote reset can arrive before CONNECT/TLS has installed its protocol-specific handlers.
+		socket.on("error", () => {});
 		this.sockets.add(socket);
 		socket.once("close", () => this.sockets.delete(socket));
 	}
@@ -326,7 +338,14 @@ export class CaptureProxy {
 		// identity keeps response bodies readable; the app gets the same content uncompressed
 		headers["accept-encoding"] = "identity";
 		const transport = url.protocol === "https:" ? https : http;
+		const proxyUrl = this.proxyFor(url);
+		let agent: HttpsProxyAgent<string> | undefined;
+		if (proxyUrl) {
+			agent = this.upstreamAgents.get(proxyUrl);
+			if (!agent) { agent = new HttpsProxyAgent(proxyUrl); this.upstreamAgents.set(proxyUrl, agent); }
+		}
 		const upstream = transport.request(url, {
+			...(agent && { agent }),
 			method: req.method,
 			headers,
 			...(url.protocol === "https:" && this.options.upstreamCa && { ca: [...tls.rootCertificates, ...this.options.upstreamCa] }),
@@ -392,15 +411,26 @@ export class CaptureProxy {
 			return;
 		}
 
-		this.tunnel(host, port, socket, head);
+		void this.tunnel(host, port, socket, head);
 	}
 
-	private tunnel(host: string, port: number, socket: net.Socket, head: Buffer): void {
+	private async tunnel(host: string, port: number, socket: net.Socket, head: Buffer): Promise<void> {
 		const entry = this.record({ url: `https://${host}${port === 443 ? "" : `:${port}`}`, method: "CONNECT", resourceType: "tls" });
 		this.stats.tlsTunnels++;
-		const upstream = net.connect(port, host);
+		let upstream: net.Socket;
+		try {
+			const proxy = this.proxyFor(new URL(`https://${host}:${port}`));
+			upstream = proxy ? await this.connectViaProxy(host, port, proxy) : await new Promise<net.Socket>((resolve, reject) => {
+				const direct = net.connect(port, host); this.track(direct);
+				direct.once("connect", () => resolve(direct)); direct.once("error", reject);
+			});
+		} catch (error) {
+			this.finish(entry, `upstream_connect_failed: ${(error as Error).message}`);
+			socket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n"); return;
+		}
+		if (socket.destroyed) { upstream.destroy(); this.finish(entry, "client_closed"); return; }
 		this.track(upstream);
-		upstream.once("connect", () => {
+		{
 			entry.status = 200;
 			socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
 			if (head.length) {
@@ -416,7 +446,7 @@ export class CaptureProxy {
 			});
 			socket.pipe(upstream);
 			upstream.pipe(socket);
-		});
+		}
 		const done = (error?: Error) => {
 			if (!entry.completed) {
 				this.finish(entry, error ? `${(error as NodeJS.ErrnoException).code ?? "tunnel_error"}: ${error.message}` : undefined);
@@ -435,6 +465,41 @@ export class CaptureProxy {
 		upstream.on("close", () => done());
 		socket.on("error", () => done());
 		socket.on("close", () => done());
+	}
+
+	private proxyFor(url: URL): string | undefined {
+		if (!this.options.upstreamProxy) {return undefined;}
+		const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+		// A host proxy cannot resolve Android/host loopback services on behalf of the capture.
+		if (host === "localhost" || host === "::1" || host.startsWith("127.")) {return undefined;}
+		const excluded = (this.options.noProxy || "").split(/[ ,]+/).filter(Boolean).some(rule => {
+			if (rule === "*") {return true;}
+			const [domain, port] = rule.toLowerCase().split(":");
+			if (port && port !== (url.port || (url.protocol === "https:" ? "443" : "80"))) {return false;}
+			const suffix = domain.replace(/^\*?\./, "");
+			return host === suffix || ((domain.startsWith(".") || domain.startsWith("*.")) && host.endsWith(`.${suffix}`));
+		});
+		return excluded ? undefined : this.options.upstreamProxy;
+	}
+
+	private connectViaProxy(host: string, port: number, proxy: string): Promise<net.Socket> {
+		return new Promise((resolve, reject) => {
+			const url = new URL(proxy);
+			const auth = url.username || url.password ? Buffer.from(`${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`).toString("base64") : null;
+			const transport = url.protocol === "https:" ? https : http;
+			const request = transport.request(url, { method: "CONNECT", path: `${host}:${port}`, agent: false,
+				headers: { Host: `${host}:${port}`, ...(auth && { "Proxy-Authorization": `Basic ${auth}` }) } });
+			const timer = setTimeout(() => request.destroy(new Error("Upstream proxy connect timed out")), 10000);
+			request.once("socket", socket => this.track(socket));
+			request.once("error", error => { clearTimeout(timer); reject(error); });
+			request.once("connect", (response, socket, initial) => {
+				clearTimeout(timer);
+				if (response.statusCode !== 200) { socket.destroy(); reject(new Error(`Upstream proxy returned HTTP ${response.statusCode}`)); return; }
+				if (initial.length) {socket.unshift(initial);}
+				resolve(socket);
+			});
+			request.end();
+		});
 	}
 
 	private async decrypt(host: string, port: number, socket: net.Socket, head: Buffer): Promise<void> {

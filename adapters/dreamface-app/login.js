@@ -7,7 +7,9 @@
 // A verification code ("Enter the code that was sent to ...") is never handled here: the command waits up to
 // `verify_wait_sec` for a person to enter it on the device, and fails with `verification_required` otherwise.
 import { AdapterError, defineAdapter, errors } from '@mobilenext/mobile-mcp/adapter-sdk';
-import { isGuest, logOut, openSettings, readAccount, sameEmail, sleep } from './_login.js';
+import { openScreen } from './_navigate.js';
+import { SCREENS } from './_sitemap.js';
+import { isGuest, logOut, openSettings, readAccount, sameEmail, sleep, waitForSignedInSettings } from './_login.js';
 
 /** How long the app may stay on the password page after it was filled before that counts as a refusal. */
 const PASSWORD_PAGE_GRACE_MS = 30_000;
@@ -31,13 +33,17 @@ export default defineAdapter({
     if (!email || !args.password) throw errors.argument('email and password are required');
     const deadline = Date.now() + args.timeout_sec * 1000;
     const pkg = await device.package();
-    await device.restart(pkg);
+    await device.launch(pkg);
 
+    const finish = async (fresh) => {
+      await openScreen(ctx, SCREENS, 'home', { waitMs: Math.min(60000, Math.max(1, deadline - Date.now())) });
+      return { account: email, logged_in_now: fresh, package: pkg, screen: 'home' };
+    };
     let settings = await openSettings(ctx, 120_000);
     if (!isGuest(settings)) {
       // Signed in already: the Account page names the account.
       const account = await readAccount(ctx, settings);
-      if (account.email && sameEmail(account.email, email)) return { account: email, logged_in_now: false, package: pkg };
+      if (account.email && sameEmail(account.email, email)) return finish(false);
       await logOut(ctx, account);
       await sleep(2000);
       settings = await openSettings(ctx, 90_000);
@@ -71,7 +77,7 @@ export default defineAdapter({
 
       const password = snap.byTestId('et_pwd');
       if (password && filledAt === null) {
-        await screen.getByTestId('et_pwd').fill(String(args.password));
+        await screen.getByTestId('et_pwd').fillSecret(String(args.password));
         await screen.getByTestId('btn_continue').tap();
         filledAt = Date.now();
         continue;
@@ -82,12 +88,14 @@ export default defineAdapter({
       }
 
       const onLoginScreens = password || snap.byTestId('et_email') || snap.byText('Continue with Email', { exact: true });
-      if (filledAt !== null && snap.ok && !onLoginScreens) {
+      const foreground = filledAt !== null && !onLoginScreens ? await device.foreground().catch(() => null) : null;
+      const postLogin = snap.byText('Function Setting', { exact: true }) || (foreground?.packageName === pkg && /\.(MainActivity|SettingActivity)$/.test(foreground.activity || ''));
+      if (filledAt !== null && snap.ok && !onLoginScreens && postLogin) {
         // The login screens are gone: confirm which account the app is signed in to.
         settings = await openSettings(ctx, 90_000);
-        if (isGuest(settings)) throw errors.expectation('the login screens closed but the app is still a guest');
+        settings = await waitForSignedInSettings(ctx, settings, Math.min(30000, Math.max(1, deadline - Date.now())));
         const account = await readAccount(ctx, settings);
-        if (account.email && sameEmail(account.email, email)) return { account: email, logged_in_now: true, package: pkg };
+        if (account.email && sameEmail(account.email, email)) return finish(true);
         throw errors.expectation(`the app is signed in to ${account.email ?? 'another account'}, not ${email}`);
       }
       await sleep(1000);

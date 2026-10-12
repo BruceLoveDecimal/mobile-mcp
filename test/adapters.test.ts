@@ -384,6 +384,24 @@ export default defineAdapter({ description: "open", access: "read", args: [{ nam
 	expect(await runCommand("demo", "open", { screen: "nope" }, runOptions(registry, robot))).toMatchObject({ ok: false, error: { code: "invalid_args" } });
 });
 
+test("navigation recovers Account to Home without restarting and leaves an already reached target intact", async () => {
+	const navigate = await import(pathToFileURL(path.join(BUILTIN_ADAPTERS_DIR, "dreamface-app", "_navigate.js")).href);
+	const screens = [
+		{ id: "home", parent: null, markers: ["Home"] },
+		{ id: "video", parent: "home", markers: ["Video"], open: { taps: ["Open video"] } },
+	];
+	let state = "Account", backs = 0, restarts = 0, taps = 0;
+	const snap = () => ({ ok: true, texts: [state], byText: (t: string) => state === t, byTestId: () => undefined });
+	const ctx = { device: { package: async () => "demo", launch: async () => {}, restart: async () => { restarts++; },
+		back: async () => { backs++; state = "Home"; } },
+	screen: { snapshot: async () => snap(), getByText: () => ({ tap: async () => { taps++; state = "Video"; } }) },
+	expect: () => ({ toBeVisible: async () => {} }) };
+	await navigate.openScreen(ctx, screens, "video", { waitMs: 500 });
+	expect({ state, backs, restarts, taps }).toEqual({ state: "Video", backs: 1, restarts: 0, taps: 1 });
+	await navigate.openScreen(ctx, screens, "video", { waitMs: 500 });
+	expect({ backs, restarts, taps }).toEqual({ backs: 1, restarts: 0, taps: 1 });
+});
+
 test("the dreamface-app map is consistent: parents exist, ids are unique, traps and commands name real screens", async () => {
 	const map = await import(pathToFileURL(path.join(BUILTIN_ADAPTERS_DIR, "dreamface-app", "_sitemap.js")).href);
 	const ids = map.SCREENS.map((s: { id: string }) => s.id);
@@ -458,7 +476,7 @@ test("apps_search lists apps and finds commands; app_run returns JSON and isErro
 	expect(tools).toEqual(expect.arrayContaining(["apps_search", "app_run"]));
 
 	const list = await callJson(client, "apps_search", {});
-	expect(list.body.adapterApi).toBe(4);
+	expect(list.body.adapterApi).toBe(5);
 	expect(list.body.apps).toEqual([expect.objectContaining({ app: "dreamface-app", packages: ["com.dreamapp.dubhe"] })]);
 
 	const found = await callJson(client, "apps_search", { query: "dreamface sitemap" });
@@ -492,4 +510,38 @@ test("host login arguments and failures never enter engine logs", async () => {
 			expect(logs.join("\n")).toContain("upstream_error");
 		} finally {await client.close();}
 	} finally {console.error = previous;}
+});
+
+test("opaque native pages use the home anchor only in the verified MainActivity", async () => {
+	const { openScreen } = await import(pathToFileURL(path.join(BUILTIN_ADAPTERS_DIR, "dreamface-app", "_navigate.js")).href);
+	const screens = [{ id: "home", parent: null, activity: "demo/demo.MainActivity", markers: ["Home"], open: { resetPoint: { xRatio: 0.1, yRatio: 0.9 } } }];
+	for (const activity of ["demo.MainActivity", "demo.WebViewActivity"]) {
+		let state = "opaque", backs = 0, taps = 0;
+		const ctx = { device: { package: async () => "demo", launch: async () => {}, foreground: async () => ({ packageName: "demo", activity }), screenSize: async () => ({ width: 1000, height: 2000 }), back: async () => { backs++; state = "Home"; } },
+			screen: { getByText: () => ({}), snapshot: async () => ({ texts: [state], byText: (t: string) => state === t, byTestId: () => undefined }), tap: async (x: number, y: number) => { expect([x, y]).toEqual([100, 1800]); taps++; state = "Home"; } },
+			expect: () => ({ toBeVisible: async () => {} }) };
+		await openScreen(ctx, screens, "home", { waitMs: 1000 });
+		expect({ taps, backs }).toEqual(activity.endsWith("MainActivity") ? { taps: 1, backs: 0 } : { taps: 0, backs: 1 });
+	}
+});
+
+test("navigation leaves native generation through View later without cancelling or replaying it", async () => {
+	const { openScreen } = await import(pathToFileURL(path.join(BUILTIN_ADAPTERS_DIR, "dreamface-app", "_navigate.js")).href);
+	let state = "View later in profile", backs = 0;
+	const ctx = { device: { package: async () => "demo", launch: async () => {}, back: async () => { backs++; } },
+		screen: { snapshot: async () => ({ texts: [state], byText: (t: string) => state === t ? { text: t } : undefined, byTestId: () => undefined, tap: async () => { state = "Home"; } }), getByText: () => ({}) },
+		expect: () => ({ toBeVisible: async () => {} }) };
+	await openScreen(ctx, [{ id: "home", parent: null, markers: ["Home"] }], "home", { waitMs: 500 });
+	expect(state).toBe("Home");
+	expect(backs).toBe(0);
+});
+
+test("native login waits for the account row to refresh and never treats an unreadable screen as signed in", async () => {
+	const login = await import(pathToFileURL(path.join(BUILTIN_ADAPTERS_DIR, "dreamface-app", "_login.js")).href);
+	const snapshot = (guest: boolean, ok = true) => ({ ok, byTestId: (id: string) => ok && id === "menuLogin", byText: (text: string) => ok && (text === "Function Setting" || guest && text === "Log in") });
+	const guest = snapshot(true), signed = snapshot(false), blank = snapshot(false, false);
+	let reads = 0;
+	const result = await login.waitForSignedInSettings({ screen: { snapshot: async () => ++reads === 1 ? blank : signed } }, guest, 3000);
+	expect(result).toBe(signed); expect(reads).toBe(2);
+	await expect(login.waitForSignedInSettings({ screen: { snapshot: async () => guest } }, guest, 5)).rejects.toThrow("did not become signed in");
 });

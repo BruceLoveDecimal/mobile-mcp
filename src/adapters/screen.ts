@@ -293,11 +293,16 @@ export class Locator {
 		await this.input("fill", text, opts);
 	}
 
+	/** Masked length cannot prove characters; host login verifies the resulting account after submission. */
+	async fillSecret(text: string, opts: WaitOptions = {}): Promise<void> {
+		await this.input("fill", text, opts, true);
+	}
+
 	async type(text: string, opts: WaitOptions = {}): Promise<void> {
 		await this.input("type", text, opts);
 	}
 
-	private async input(action: "fill" | "type", text: string, opts: WaitOptions): Promise<void> {
+	private async input(action: "fill" | "type", text: string, opts: WaitOptions, maskedInput = false): Promise<void> {
 		const started = Date.now();
 		const timeout = opts.timeout ?? 30000;
 		await this.element({ timeout });
@@ -309,7 +314,7 @@ export class Locator {
 		const remaining = timeout - (Date.now() - started);
 		if (remaining <= 0) { throw new CommandError("timeout", "Input deadline expired before dispatch"); }
 		const result = await ui.run("act", {
-			action, text, ...(e.ref ? { ref: e.ref, snapshotId: observation.snapshot.id } : {
+			action, text, maskedInput, ...(e.ref ? { ref: e.ref, snapshotId: observation.snapshot.id } : {
 				target: { role: roleOf(e), ...(e.identifier ? { id: e.identifier } : {}), ...(e.label ? { label: e.label, exact: true } : {}) },
 			}), timeoutMs: remaining,
 		}, this.driver.signal);

@@ -49,7 +49,7 @@ source that sets it:
 A command whose descriptor sets `audience: 'host'` is run by the hosting application (a login with credentials the
 agent never sees): `apps_search` leaves it out, `app_run` still runs it.
 
-**Compatibility.** `package.json` → `mobileMcp.adapterApi` (currently `2`) is the adapter API level; `apps_search`
+**Compatibility.** `package.json` → `mobileMcp.adapterApi` (currently `5`) is the adapter API level; `apps_search`
 without a query reports it. It goes up when adapters start depending on new context features. An application that
 syncs adapters only uses adapters whose `adapterApi` is not above the engine's.
 
@@ -138,3 +138,9 @@ details? } }`. Codes besides the adapter's own: `invalid_args`, `unknown_app`, `
 - [`dreamface-app`](../adapters/dreamface-app/README.md): `sitemap` (the app map, read-only, never touches the device),
   `open {screen}` (navigate by the map), `login {email, password}` (sign the app in to an email account), `credits` and `image-models` (read on screen, the app-side counterparts of the
   web `dreamface/credits` and `dreamface/image-models`). The map comes from a depth-first walk on a device.
+
+### Adapter API 5: navigation recovery
+
+`device.foreground()` preserves the Android `activity` when the driver provides it, and `device.screenSize()` returns physical width/height/scale from the driver. Sparse accessibility snapshots cannot be used to infer display dimensions. Product adapters can bind a documented fallback coordinate to a verified Activity; never apply that coordinate to an unknown WebView. Launch resumes the existing App task; destructive restart remains an explicit option.
+
+`Locator.fillSecret` is a trusted-adapter input path for masked native password fields. It replaces once, checks the observed mask length, keeps `controlState:unverified` and `verified:false`, and reports `verification:masked_length`. Mask length cannot prove characters: the host login must submit and verify the signed-in identity. It never reveals the password. Ordinary `fill` / `type` still require full exact readback, and MCP interaction tools do not expose a switch to disable that verification.

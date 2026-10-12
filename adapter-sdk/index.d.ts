@@ -90,6 +90,8 @@ export interface Locator {
   longPress(opts?: WaitOptions & { duration?: number }): Promise<void>;
   /** Replace the entire field and read back its value; throws on mismatch. */
   fill(text: string, opts?: WaitOptions): Promise<void>;
+  /** Secret input accepts masked length only; caller must verify authentication separately. Never unmasks. */
+  fillSecret(text: string, opts?: WaitOptions): Promise<void>;
   /** Append to the field and read back its value; throws on mismatch. */
   type(text: string, opts?: WaitOptions): Promise<void>;
   readonly description: string;
@@ -151,7 +153,8 @@ export interface DeviceHandle {
   openUrl(url: string): Promise<void>;
   pressButton(name: ButtonName): Promise<void>;
   back(): Promise<void>;
-  foreground(): Promise<{ packageName: string; appName: string }>;
+  foreground(): Promise<{ packageName: string; appName: string; activity?: string }>;
+  screenSize(): Promise<{ width: number; height: number; scale: number }>;
   listApps(): Promise<Array<{ packageName: string; appName: string }>>;
   /** Device log lines (NDJSON strings), filtered with key=value / key!=value. */
   logs(opts?: { filters?: string[]; limit?: number; timeoutMs?: number }): Promise<string[]>;

@@ -281,3 +281,23 @@ test("cancellation holds the native call until bounded transport cleanup complet
 	expect(result.error?.code).toBe("command_outcome_unknown");
 	expect(cleanup).toBe(true);
 });
+
+test("trusted secret input accepts masked length without claiming exact character verification", async () => {
+	let value = "", writes = 0;
+	const d = device([[]]);
+	d.robot.getElementsOnScreen = async () => [element(value, { type: "android.widget.EditText", value })];
+	d.robot.fillText = async text => { writes++; value = "•".repeat(text.length); };
+	const result = await d.ui.run("act", { action: "fill", target: { role: "textbox" }, text: "private-secret", maskedInput: true });
+	expect(result).toMatchObject({ ok: true, verification: "masked_length", verified: false, controlState: "unverified", actual: "******" });
+	expect(JSON.stringify(result)).not.toContain("private-secret");
+	expect(writes).toBe(1);
+});
+
+test("a partial masked secret fails without sending it again", async () => {
+	let value = "", writes = 0;
+	const d = device([[]]);
+	d.robot.getElementsOnScreen = async () => [element(value, { type: "android.widget.EditText", value })];
+	d.robot.fillText = async () => { writes++; value = "••"; };
+	expect(await d.ui.run("act", { action: "fill", target: { role: "textbox" }, text: "secret", maskedInput: true, timeoutMs: 30 })).toMatchObject({ ok: false, error: { code: "input_mismatch" }, actual: "******" });
+	expect(writes).toBe(1);
+});

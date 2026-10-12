@@ -16,6 +16,11 @@ function createMockMobileDevice(mockResponse: string): { device: MobileDevice; c
 }
 
 test.describe("MobileDevice", () => {
+	test("foreground activity is preserved for safe navigation recovery", async () => {
+		const { device } = createMockMobileDevice(JSON.stringify({ success: true, data: { packageName: "com.example", appName: "Example", activity: "com.example.MainActivity" } }));
+		expect(await device.getForegroundApp()).toMatchObject({ packageName: "com.example", activity: "com.example.MainActivity" });
+	});
+
 	test("iOS keeps its existing text transport and does not advertise Android replacement", async () => {
 		const device = new MobileDevice("ios-device", "ios");
 		const calls: string[][] = [];
