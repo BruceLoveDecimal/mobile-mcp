@@ -186,3 +186,98 @@ test("an inner mobilecli text timeout after dispatch is outcome unknown", async 
 	expect(result.actionSent).toBe(true);
 	expect(result.error?.code).toBe("command_outcome_unknown");
 });
+
+test("native refs survive unrelated clock changes, renumbering and target movement", async () => {
+	const d = device([
+		[element("Save", { identifier: "app:id/save" }), element("10:00", { ref: "@e2" })],
+		[element("10:01", { ref: "@e1" }), element("Save", { identifier: "app:id/save", ref: "@e9", rect: { x: 200, y: 400, width: 100, height: 40 } })],
+	]);
+	const shown = await d.ui.run("observe", {});
+	const result = await d.ui.run("act", { action: "tap", ref: "@e1", snapshotId: shown.snapshot?.id });
+	expect(result.ok).toBe(true);
+	expect(d.taps).toEqual([[250, 420]]);
+	expect(result.delivery).toBe("dispatched");
+	expect(result.controlState).toBe("unverified");
+});
+
+test("native refs reject recycled rows, foreground changes and duplicate identities", async () => {
+	for (const changed of [
+		[element("Delete", { identifier: "row", context: ["item B"] })],
+		[element("Save", { identifier: "row", context: ["item B"] })],
+		[element("Save", { identifier: "row", context: ["item A"] }), element("Save", { identifier: "row", context: ["item A"], ref: "@e2" })],
+	]) {
+		const d = device([[element("Save", { identifier: "row", context: ["item A"] })], changed]);
+		const shown = await d.ui.run("observe", {});
+		expect((await d.ui.run("act", { action: "tap", ref: "@e1", snapshotId: shown.snapshot?.id })).error?.code).toBe("stale_ref");
+		expect(d.taps).toHaveLength(0);
+	}
+	const d = device([[element("Save")]]);
+	const shown = await d.ui.run("observe", {});
+	d.robot.getForegroundApp = async () => ({ packageName: "com.other.app", appName: "Other" });
+	expect((await d.ui.run("act", { action: "tap", ref: "@e1", snapshotId: shown.snapshot?.id })).error?.code).toBe("stale_ref");
+});
+
+test("native actions refuse offscreen and overlapping actionable controls before dispatch", async () => {
+	const d = device([[element("Save"), element("Overlay", { ref: "@e2", rect: { x: 40, y: 30, width: 40, height: 30 } })]]);
+	expect((await d.ui.run("act", { action: "tap", target: { text: "Save" } })).error?.code).toBe("intercepted");
+	expect(d.taps).toHaveLength(0);
+	d.robot.getScreenSize = async () => ({ width: 50, height: 100, scale: 1 });
+	expect((await d.ui.run("act", { action: "tap", target: { text: "Save" } })).error?.code).toBe("not_visible");
+});
+
+test("fill, clear and append are verified against the whole field value", async () => {
+	let value = "old";
+	const d = device([[]]);
+	d.robot.getElementsOnScreen = async () => [element(value, { type: "android.widget.EditText", identifier: "input", value })];
+	d.robot.fillText = async text => { value = text; };
+	d.robot.sendKeys = async text => { value += text; };
+	for (const [action, text, expected] of [["fill", "中文\n".repeat(200), "中文\n".repeat(200)], ["type", "tail", "中文\n".repeat(200) + "tail"], ["clear", undefined, ""]] as const) {
+		const result = await d.ui.run("act", { action, text, target: { role: "textbox" } });
+		expect(result.ok).toBe(true);
+		expect(result.actual).toBe(expected);
+		expect(result.controlState).toBe("verified");
+		expect(result.snapshot?.elements[0].value).toBe(expected);
+	}
+});
+
+test("partial input fails with actual value and never retries the write", async () => {
+	let value = "old", writes = 0;
+	const d = device([[]]);
+	d.robot.getElementsOnScreen = async () => [element(value, { type: "android.widget.EditText", value })];
+	d.robot.fillText = async () => { writes++; value = "truncated"; };
+	const result = await d.ui.run("act", { action: "fill", target: { role: "textbox" }, text: "whole text", timeoutMs: 30 });
+	expect(result.error?.code).toBe("input_mismatch");
+	expect(result.actual).toBe("truncated");
+	expect(result.verified).toBe(false);
+	expect(writes).toBe(1);
+});
+
+
+test("a foreground change during verification cannot certify an identical field in another app", async () => {
+	let value = "old", changed = false;
+	const d = device([[]]);
+	d.robot.getElementsOnScreen = async () => [element(value, { type: "android.widget.EditText", value })];
+	d.robot.getForegroundApp = async () => ({ packageName: changed ? "other.app" : "com.example.demo", appName: "App" });
+	d.robot.fillText = async text => { value = text; changed = true; };
+	const result = await d.ui.run("act", { action: "fill", target: { role: "textbox" }, text: "new" });
+	expect(result).toMatchObject({ ok: false, controlState: "unverified", error: { code: "stale_ref" } });
+});
+
+
+test("input refuses a field that did not gain focus and does not send text", async () => {
+	let writes = 0;
+	const d = device([[element("old", { type: "android.widget.EditText", focused: false })]]);
+	d.robot.fillText = async () => { writes++; };
+	expect(await d.ui.run("act", { action: "fill", target: { role: "textbox" }, text: "new" })).toMatchObject({ ok: false, error: { code: "not_focused" } });
+	expect(writes).toBe(0);
+});
+
+test("cancellation holds the native call until bounded transport cleanup completes", async () => {
+	const d = device([[]]);
+	let cleanup = false;
+	d.robot.withCommandContext = async (context, run) => run();
+	d.robot.tap = async () => { await new Promise(resolve => setTimeout(resolve, 40)); cleanup = true; };
+	const result = await d.ui.run("act", { action: "tap", x: 10, y: 10, timeoutMs: 10 });
+	expect(result.error?.code).toBe("command_outcome_unknown");
+	expect(cleanup).toBe(true);
+});

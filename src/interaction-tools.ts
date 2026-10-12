@@ -25,7 +25,7 @@ export function registerInteractionTools(server: McpServer, getRobot: (device: s
 			let ui = sessions.get(device);
 			if (!ui) { ui = new Interaction(context => getRobot(device, context)); sessions.set(device, ui); }
 			const started = Date.now();
-			const budget = Number(args.timeoutMs ?? (operation === "scroll" ? 15000 : 5000));
+			const budget = Number(args.timeoutMs ?? (["type", "fill", "clear"].includes(String((args as Record<string, unknown>).action ?? "")) ? 30000 : operation === "scroll" ? 15000 : 5000));
 			const result = await locks.run(device, () => {
 				const remaining = budget - (Date.now() - started);
 				if (remaining <= 0) {
@@ -40,7 +40,7 @@ export function registerInteractionTools(server: McpServer, getRobot: (device: s
 		since: z.string().optional(),
 	});
 	register("mobile_action", "act", "Locate and act once. Targets must match uniquely and be enabled. Optional expect waits for a postcondition; otherwise no global settle/read follows the action. Returns the exact assertion or failure snapshot.", {
-		action: z.enum(["tap", "double_tap", "long_press", "type", "swipe", "press"]),
+		action: z.enum(["tap", "double_tap", "long_press", "type", "fill", "clear", "swipe", "press"]),
 		target: target.optional(), ref: z.string().optional(), snapshotId: z.string().optional(), ...point,
 		text: z.string().optional(), submit: z.boolean().optional(),
 		button: z.enum(["HOME", "BACK", "ENTER", "VOLUME_UP", "VOLUME_DOWN", "DPAD_CENTER", "DPAD_UP", "DPAD_DOWN", "DPAD_LEFT", "DPAD_RIGHT"]).optional(),

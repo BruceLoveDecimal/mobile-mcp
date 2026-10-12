@@ -76,7 +76,7 @@
     "./lib/*": "./lib/*"
   },
   "mobileMcp": {
-    "adapterApi": 3
+    "adapterApi": 4
   },
   "directories": {
     "lib": "lib"

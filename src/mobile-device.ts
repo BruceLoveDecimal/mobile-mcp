@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Mobilecli } from "./mobilecli";
+import { CommandError } from "./adapters/errors";
 import { ActionableError, Button, CommandContext, InstalledApp, Orientation, Robot, ScreenElement, ScreenSize, ScreenshotOptions, SwipeDirection } from "./robot";
 
 interface InstalledAppsResponse {
@@ -48,6 +49,10 @@ interface UIElementResponse {
 	selected?: boolean;
 	checked?: boolean;
 	enabled?: boolean;
+	windowId?: string;
+	visible?: boolean;
+	clickable?: boolean;
+	editable?: boolean;
 	children?: UIElementResponse[];
 }
 
@@ -79,7 +84,7 @@ interface ClipboardResponse {
 	};
 }
 
-const flattenUIElement = (element: UIElementResponse): ScreenElement[] => {
+const flattenUIElement = (element: UIElementResponse, context: string[] = [], ancestorRefs: string[] = []): ScreenElement[] => {
 	const screenElement: ScreenElement = {
 		type: element.type,
 		label: element.label,
@@ -93,13 +98,23 @@ const flattenUIElement = (element: UIElementResponse): ScreenElement[] => {
 		selected: element.selected,
 		checked: element.checked,
 		enabled: element.enabled,
+		windowId: element.windowId,
+		visible: element.visible,
+		clickable: element.clickable,
+		editable: element.editable,
+		context,
+		ancestorRefs,
 	};
 
 	if (!element.children) {
 		return [screenElement];
 	}
 
-	return [screenElement, ...element.children.flatMap(child => flattenUIElement(child))];
+	const ancestor = JSON.stringify([element.type, element.identifier, element.label, element.name,
+		/edittext|textfield|textbox/i.test(element.type) ? undefined : element.text]);
+	const childContext = [...context, ancestor];
+	const childRefs = element.ref ? [...ancestorRefs, element.ref] : ancestorRefs;
+	return [screenElement, ...element.children.flatMap(child => flattenUIElement(child, childContext, childRefs))];
 };
 
 export class MobileDevice implements Robot {
@@ -110,8 +125,10 @@ export class MobileDevice implements Robot {
 		return this.commandContext.run(context, run);
 	}
 
-	public constructor(private deviceId: string) {
+	public readonly fillText?: (text: string) => Promise<void>;
+	public constructor(private deviceId: string, private platform: "android" | "ios" = "android") {
 		this.mobilecli = new Mobilecli();
+		if (platform === "android") { this.fillText = text => this.pasteText(text, true); }
 	}
 
 	private async runCommand(args: string[]): Promise<string> {
@@ -258,7 +275,30 @@ export class MobileDevice implements Robot {
 	}
 
 	public async sendKeys(text: string): Promise<void> {
-		await this.runCommand(["io", "text", text]);
+		if (this.platform === "ios") { await this.runCommand(["io", "text", text]); } else { await this.pasteText(text, false); }
+	}
+
+	private async pasteText(text: string, replace: boolean): Promise<void> {
+		if (!text && !replace) { return; }
+		// mobilecli's ASCII path injects every key and can expire after 10s. A paste sends the entire Unicode string.
+		// The clipboard is private to this operation: neither its previous contents nor the replacement is returned.
+		const previous = await this.getClipboard();
+		let changed = false;
+		try {
+			if (text) { await this.setClipboard(text); changed = true; }
+			await this.runCommand(["io", "keys", replace ? "ctrl+a" : "ctrl+end"]);
+			await this.runCommand(["io", "keys", text ? "ctrl+v" : "backspace"]);
+		} finally {
+			if (changed) {
+				// Cleanup gets its own bounded budget, even if the caller cancelled the input operation.
+				try {
+					const restore = ["io", "clipboard", "set", previous, "--device", this.deviceId];
+					await this.mobilecli.executeCommandAsync(restore, 3000, AbortSignal.timeout(3000));
+				} catch {
+					throw new CommandError("command_outcome_unknown", "Clipboard restoration failed after input; observe before retrying");
+				}
+			}
+		}
 	}
 
 	public async pressButton(button: Button): Promise<void> {

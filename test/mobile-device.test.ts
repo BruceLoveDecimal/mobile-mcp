@@ -16,6 +16,14 @@ function createMockMobileDevice(mockResponse: string): { device: MobileDevice; c
 }
 
 test.describe("MobileDevice", () => {
+	test("iOS keeps its existing text transport and does not advertise Android replacement", async () => {
+		const device = new MobileDevice("ios-device", "ios");
+		const calls: string[][] = [];
+		(device as any).mobilecli.executeCommand = (args: string[]) => { calls.push(args); return ""; };
+		await device.sendKeys("hello");
+		expect(calls).toEqual([["io", "text", "hello", "--device", "ios-device"]]);
+		expect(device.fillText).toBeUndefined();
+	});
 
 	test.describe("coordinate rounding", () => {
 
@@ -59,6 +67,22 @@ test.describe("MobileDevice", () => {
 	});
 
 	test.describe("element state", () => {
+		test("bulk input restores the private clipboard and distinguishes replace from append", async () => {
+			const { device, calls } = createMockMobileDevice(JSON.stringify({ data: { text: "previous" } }));
+			const cleanup: string[][] = [];
+			(device as any).mobilecli.executeCommandAsync = async (args: string[]) => { cleanup.push(args); return ""; };
+			await device.fillText!("长文本\n".repeat(100));
+			expect(calls.some(a => a.includes("ctrl+a"))).toBe(true);
+			expect(calls.some(a => a.includes("ctrl+v"))).toBe(true);
+			expect(calls.some(a => a[1] === "text")).toBe(false);
+			expect(cleanup[0]).toEqual(["io", "clipboard", "set", "previous", "--device", "test-device"]);
+			calls.length = 0;
+			await device.sendKeys("append");
+			expect(calls.some(a => a.includes("ctrl+end"))).toBe(true);
+			calls.length = 0;
+			await device.fillText!("");
+			expect(calls.some(a => a.includes("backspace"))).toBe(true);
+		});
 
 		test("getElementsOnScreen should keep ref, selected, checked and enabled from dump ui", async () => {
 			const dump = { status: "ok", data: { elements: [{
