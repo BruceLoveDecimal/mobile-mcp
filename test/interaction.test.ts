@@ -301,3 +301,25 @@ test("a partial masked secret fails without sending it again", async () => {
 	expect(await d.ui.run("act", { action: "fill", target: { role: "textbox" }, text: "secret", maskedInput: true, timeoutMs: 30 })).toMatchObject({ ok: false, error: { code: "input_mismatch" }, actual: "******" });
 	expect(writes).toBe(1);
 });
+
+test("screen and foreground reads overlap without caching either result", async () => {
+	const d = device([[element("Ready")]]);
+	let release: () => void = () => {};
+	const foregroundStarted = new Promise<void>(resolve => { release = resolve; });
+	d.robot.getElementsOnScreen = async () => { await foregroundStarted; return [element("Ready")]; };
+	d.robot.getForegroundApp = async () => { release(); return { packageName: "com.example.demo", appName: "Demo" }; };
+	const result = await d.ui.run("observe", { timeoutMs: 100 });
+	expect(result.ok).toBe(true);
+	expect(result.snapshot?.foreground?.packageName).toBe("com.example.demo");
+	expect(result.metrics.uiReadMs).toBeGreaterThanOrEqual(0);
+	expect(result.metrics.foregroundMs).toBeGreaterThanOrEqual(0);
+});
+
+test("foreground timeout identifies its phase and cannot certify a hidden target", async () => {
+	const d = device([[]]);
+	d.robot.getForegroundApp = async () => new Promise(() => {});
+	const result = await d.ui.run("expect", { target: { text: "Loading" }, state: "hidden", timeoutMs: 15 });
+	expect(result.ok).toBe(false);
+	expect(result.error?.details?.stage).toBe("foreground");
+	expect(result.snapshot).toBeUndefined();
+});

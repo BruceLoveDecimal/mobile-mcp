@@ -49,7 +49,7 @@ export interface InteractionResult {
  actual?: string;
  swipes?: number;
  error?: ErrorBody;
- metrics: { reads: number; elapsedMs: number };
+ metrics: { reads: number; elapsedMs: number; uiReadMs?: number; foregroundMs?: number };
 }
 
 const signature = (elements: ScreenElement[], refs = false): string => createHash("sha256")
@@ -77,6 +77,7 @@ export class Interaction {
 		let robot: Robot | undefined;
 		let snapshot: Snapshot | undefined;
 		let reads = 0;
+		const timings = { uiReadMs: 0, foregroundMs: 0 };
 		let actionSent = false;
 		let writing = false;
 		let lastReadError: ErrorBody | undefined;
@@ -112,10 +113,22 @@ export class Interaction {
 		const read = async (): Promise<Snapshot | undefined> => {
 			try {
 				reads++;
-				const elements = await call(() => robot!.getElementsOnScreen());
+				// Both are fresh, read-only device queries. Await both before exposing a snapshot or releasing the lock.
+				const measured = async <T>(stage: "ui_tree" | "foreground", fn: () => Promise<T>): Promise<T> => {
+					const began = Date.now();
+					try { return await call(fn); } catch (error) {
+						const body = toErrorBody(error);
+						throw new CommandError(body.code, body.message, body.hint, { ...body.details, stage });
+					} finally { timings[stage === "ui_tree" ? "uiReadMs" : "foregroundMs"] += Date.now() - began; }
+				};
+				const [tree, foreground] = await Promise.allSettled([
+					measured("ui_tree", () => robot!.getElementsOnScreen()),
+					robot!.getForegroundApp ? measured("foreground", () => robot!.getForegroundApp!()) : Promise.resolve(undefined),
+				]);
+				if (tree.status === "rejected") { throw tree.reason; }
+				if (foreground.status === "rejected") { throw foreground.reason; }
 				lastReadError = undefined;
-				snapshot = { id: `S${++this.sequence}`, capturedAt: new Date().toISOString(), elements };
-				if (robot!.getForegroundApp) { snapshot.foreground = await call(() => robot!.getForegroundApp!()); }
+				snapshot = { id: `S${++this.sequence}`, capturedAt: new Date().toISOString(), elements: tree.value, foreground: foreground.value };
 				return snapshot;
 			} catch (error) {
 				const body = toErrorBody(error);
@@ -288,7 +301,7 @@ export class Interaction {
 					snapshot = undefined;
 				}
 			}
-			return { ok: true, ...extra, actionSent, snapshot, metrics: { reads, elapsedMs: Date.now() - started } };
+			return { ok: true, ...extra, actionSent, snapshot, metrics: { reads, elapsedMs: Date.now() - started, ...timings } };
 		} catch (error) {
 			let body = toErrorBody(error);
 			if (signal.aborted || ["timeout", "ABORT_ERR", "ETIMEDOUT"].includes(body.code) || writing && /agent timed out|context deadline exceeded|Client\.Timeout/i.test(body.message)) {
@@ -298,7 +311,7 @@ export class Interaction {
 						: lastReadError ?? { code: extra.verified === false ? "input_mismatch" : operation === "expect" || params.expect ? "expectation_failed" : "element_not_found", message: "Condition not met before the deadline" };
 			}
 			if (writing) { extra.delivery = "unknown"; }
-			return { ok: false, ...extra, actionSent, snapshot, error: body, metrics: { reads, elapsedMs: Date.now() - started } };
+			return { ok: false, ...extra, actionSent, snapshot, error: body, metrics: { reads, elapsedMs: Date.now() - started, ...timings } };
 		} finally {
 			clearTimeout(timer);
 			cancellation?.removeEventListener("abort", cancel);
