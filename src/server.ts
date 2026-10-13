@@ -8,7 +8,9 @@ import { ChildProcess } from "node:child_process";
 
 import { error, trace } from "./logger";
 import { AndroidRobot, AndroidDeviceManager } from "./android";
-import { ActionableError, Dimensions, Robot, ScreenshotOptions } from "./robot";
+import { ActionableError, Orientation, Robot, ScreenSize, ScreenshotOptions } from "./robot";
+import { computeBudgetMaxSize, isWithinBudget } from "./image-budget";
+import { LazyTtlCache } from "./lazy-cache";
 import { IosManager, IosRobot } from "./ios";
 import { PNG } from "./png";
 import { getJpegDimensions } from "./jpeg";
@@ -37,6 +39,10 @@ const DEVICE_LOG_TIMEOUT_MS = 30000;
 const DEVICE_LOG_FILTER_PATTERN = /^(pid|process|tag|level|subsystem|category|message)!?=.+$/;
 const ALLOWED_SCREENSHOT_EXTENSIONS = [".png", ".jpg", ".jpeg"];
 const DEFAULT_SCREENSHOT_MAX_SIZE = 1024;
+// device facts (screen size, orientation) are served from a per-device cache;
+// once older than the TTL the stale value is returned and a refresh runs in the
+// background, so read-only tools never block on an expired fact
+const DEVICE_FACTS_TTL_MS = 300000;
 const ALLOWED_RECORDING_EXTENSIONS = [".mp4"];
 const ALLOWED_APP_EXTENSIONS = [".apk", ".ipa", ".zip", ".app"];
 const LOGIN_PROMPT_TIMEOUT_MS = 15000;
@@ -283,6 +289,11 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 	// cache per device id, saves ~0.2s (mobilecli --version + devices) on every tool call
 	const robotCache = new Map<string, Robot>();
 	const devicePlatforms = new Map<string, "android" | "ios">();
+	const screenSizeCache = new LazyTtlCache<string, ScreenSize>(DEVICE_FACTS_TTL_MS);
+	const orientationCache = new LazyTtlCache<string, Orientation>(DEVICE_FACTS_TTL_MS);
+	// mobile_take_screenshot deliberately bypasses these caches for its coordinate
+	// mapping: apps and sensors can rotate the device without mobile_set_orientation,
+	// and a stale size would skew every tap coordinate for up to the TTL
 
 	const getRobotFromDevice = (deviceId: string): Robot => {
 		const cached = robotCache.get(deviceId);
@@ -703,7 +714,7 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 		{ readOnlyHint: true, openWorldHint: false },
 		async ({ device }) => {
 			const robot = getRobotFromDevice(device);
-			const screenSize = await robot.getScreenSize();
+			const screenSize = await screenSizeCache.get(device, () => robot.getScreenSize());
 			return `Screen size is ${screenSize.width}x${screenSize.height} pixels`;
 		}
 	);
@@ -939,19 +950,36 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 					options.maxSize = DEFAULT_SCREENSHOT_MAX_SIZE;
 				}
 
-				const screenshot = await robot.getScreenshot(options);
+				const capture = async (captureOptions: ScreenshotOptions) => {
+					const buffer = await robot.getScreenshot(captureOptions);
 
-				const isJpeg = screenshot.length > 2 && screenshot[0] === 0xff && screenshot[1] === 0xd8;
-				let mimeType = "image/jpeg";
-				let screenshotSize: Dimensions;
-				if (isJpeg) {
-					screenshotSize = getJpegDimensions(screenshot);
-				} else {
-					mimeType = "image/png";
+					const isJpeg = buffer.length > 2 && buffer[0] === 0xff && buffer[1] === 0xd8;
+					if (isJpeg) {
+						return { buffer, mimeType: "image/jpeg", size: getJpegDimensions(buffer) };
+					}
 
 					// validate we received a png, will throw exception otherwise
-					const image = new PNG(screenshot);
-					screenshotSize = image.getDimensions();
+					const image = new PNG(buffer);
+					return { buffer, mimeType: "image/png", size: image.getDimensions() };
+				};
+
+				let { buffer: screenshot, mimeType, size: screenshotSize } = await capture(options);
+
+				// keep the returned image inside the model's token budget: ask the
+				// device for a smaller copy when the first capture exceeds it.
+				// mobile_save_screenshot is unaffected and keeps the full image.
+				if (!isWithinBudget(screenshotSize.width, screenshotSize.height)) {
+					const budgetOptions: ScreenshotOptions = { format: "jpeg", quality: 75, maxSize: computeBudgetMaxSize(screenshotSize.width, screenshotSize.height) };
+					const reshot = await capture(budgetOptions);
+					if (isWithinBudget(reshot.size.width, reshot.size.height)) {
+						screenshot = reshot.buffer;
+						mimeType = reshot.mimeType;
+						screenshotSize = reshot.size;
+					} else {
+						// legacy robots ignore screenshot options; without an image library
+						// the full-size capture is the best we can return
+						trace(`Screenshot ${screenshotSize.width}x${screenshotSize.height} exceeds the image budget and the device could not downscale it`);
+					}
 				}
 
 				if (screenshotSize.width <= 0 || screenshotSize.height <= 0) {
@@ -960,6 +988,7 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 
 				// the screenshot is downscaled (and on ios the screen is in points while pixels are not),
 				// so tell the model how to map what it sees onto tap coordinates. see #29.
+				// fresh read, not the facts cache: auto-rotation must not skew the mapping
 				const screenSize = await robot.getScreenSize();
 				const mapping = describeCoordinateMapping(screenshotSize, screenSize);
 
@@ -1000,6 +1029,9 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 		async ({ device, orientation }) => {
 			const robot = getRobotFromDevice(device);
 			await robot.setOrientation(orientation);
+			// rotation can swap width/height too, so both facts must be refetched
+			orientationCache.invalidate(device);
+			screenSizeCache.invalidate(device);
 			return `Changed device orientation to ${orientation}`;
 		}
 	);
@@ -1101,7 +1133,7 @@ export const createMcpServer = (options: McpServerOptions = {}): McpServer => {
 		{ readOnlyHint: true, openWorldHint: false },
 		async ({ device }) => {
 			const robot = getRobotFromDevice(device);
-			const orientation = await robot.getOrientation();
+			const orientation = await orientationCache.get(device, () => robot.getOrientation());
 			return `Current device orientation is ${orientation}`;
 		}
 	);

@@ -114,6 +114,7 @@ export class Interaction {
 			try {
 				reads++;
 				// Both are fresh, read-only device queries. Await both before exposing a snapshot or releasing the lock.
+				// Keep reads uncached: the bounded-wait loop's correctness depends on observing the live tree.
 				const measured = async <T>(stage: "ui_tree" | "foreground", fn: () => Promise<T>): Promise<T> => {
 					const began = Date.now();
 					try { return await call(fn); } catch (error) {
