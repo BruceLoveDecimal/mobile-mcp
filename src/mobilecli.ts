@@ -130,6 +130,16 @@ export class Mobilecli {
 		const scopedPackage = `mobilecli-${normalizedPlatform}-${normalizedArch}`;
 		const binaryName = `${scopedPackage}${ext}`;
 
+		// npm may keep an older CLI hoisted for another dependency. Resolve from this module first,
+		// so the engine uses the platform package belonging to its own pinned mobilecli dependency.
+		try {
+			const manifest = require.resolve(`@mobilenext/${scopedPackage}/package.json`);
+			const resolved = join(dirname(manifest), binaryName);
+			if (existsSync(resolved)) { return resolved; }
+		} catch {
+			// Retain the legacy layout for standalone distributions without package metadata.
+		}
+
 		const nodeModulesRoots: string[] = [];
 
 		// Check if mobile-mcp is installed as a package

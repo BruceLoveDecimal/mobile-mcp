@@ -1,5 +1,34 @@
 import { test, expect } from "@playwright/test";
 import { Mobilecli } from "../src/mobilecli";
+import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+test("a packaged engine prefers its pinned nested binary over an older hoisted binary", () => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "mobilecli-resolution-")));
+	const engine = join(root, "node_modules", "@mobilenext", "mobile-mcp");
+	const platform = process.platform === "win32" ? "windows" : process.platform;
+	const cpu = process.arch === "arm64" ? "arm64" : "amd64";
+	const name = `mobilecli-${platform}-${cpu}`;
+	const binary = `${name}${process.platform === "win32" ? ".exe" : ""}`;
+	const cliOverride = process.env.MOBILECLI_PATH;
+	delete process.env.MOBILECLI_PATH;
+	try {
+		mkdirSync(join(engine, "lib"), { recursive: true });
+		copyFileSync(join(__dirname, "../lib/mobilecli.js"), join(engine, "lib/mobilecli.js"));
+		for (const [base, version] of [[root, "1.0.13"], [engine, "1.0.20"]]) {
+			const pkg = join(base, "node_modules", "@mobilenext", name);
+			mkdirSync(pkg, { recursive: true });
+			writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: `@mobilenext/${name}`, version }));
+			writeFileSync(join(pkg, binary), "fixture");
+		}
+		const PackagedCli = require(join(engine, "lib/mobilecli.js")).Mobilecli;
+		expect(new PackagedCli().getPath()).toBe(join(engine, "node_modules", "@mobilenext", name, binary));
+	} finally {
+		if (cliOverride !== undefined) { process.env.MOBILECLI_PATH = cliOverride; }
+		rmSync(root, { recursive: true, force: true });
+	}
+});
 
 type ExecuteCommandCall = {
 	args: string[];
