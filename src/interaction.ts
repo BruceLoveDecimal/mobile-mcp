@@ -264,7 +264,9 @@ export class Interaction {
 					const focused = await read();
 					if (!focused || focused.foreground?.packageName !== inputPackage) { throw new CommandError("stale_ref", "The input target's app changed before typing"); }
 					const focusedField = rematch(field!, focused.elements);
-					if (focusedField.focused === false) { throw new CommandError("not_focused", "The input target did not gain focus; no text was sent"); }
+					if (focusedField.focused === false || focusedField.focused !== true && focused.elements.some(e => editable(e) && e.focused === true)) {
+						throw new CommandError("not_focused", "The input target did not gain focus; no text was sent");
+					}
 					snapshot = undefined;
 					await write(() => action === "type" ? robot!.sendKeys(params.text!) : robot!.fillText!(desired!));
 					extra.delivery = "applied";

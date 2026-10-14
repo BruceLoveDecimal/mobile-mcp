@@ -217,8 +217,31 @@ export class Webviews {
 		const endpoints = await this.endpoints(device, packageName, signal);
 		let page: CdpPage | undefined;
 		try {
-			const eligible = endpoints.filter(e => /^https?:/.test(e.url) && (!pageId || e.id === pageId) && (!origin || new URL(e.url).origin === origin));
+			let eligible = endpoints.filter(e => /^https?:/.test(e.url) && (!pageId || e.id === pageId) && (!origin || new URL(e.url).origin === origin));
 			if (!eligible.length) { throw new CommandError("webview_not_available", "No matching debug-enabled App WebView is open", "Open the relevant App page; native UI remains available. No external browser or account is substituted."); }
+			if (eligible.length > 1 && !pageId) {
+				// Resolve only from fresh, read-only document state. An uninspectable candidate remains ambiguous.
+				const inspections = await Promise.allSettled(eligible.map(async endpoint => {
+					const candidate = await CdpPage.connect(endpoint, signal);
+					try {
+						const state = await candidate.evaluate("({visible: document.visibilityState === 'visible', focused: document.hasFocus()})", { timeoutMs: 2000 });
+						if (typeof state?.visible !== "boolean" || typeof state?.focused !== "boolean") {
+							throw new CommandError("webview_protocol_error", "The page did not return its visibility and focus state");
+						}
+						return { endpoint, ...state };
+					} finally { candidate.close(); }
+				}));
+				const failed = inspections.find(result => result.status === "rejected");
+				if (failed?.status === "rejected") {
+					if (signal?.aborted) { throw new CommandError("cancelled", "WebView selection cancelled"); }
+					throw new CommandError("webview_ambiguous", "Cannot establish the active page because a candidate could not be inspected", "Observe an explicit pageId; no background page is substituted.");
+				}
+				const states = inspections.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
+				const visible = states.filter(state => state.visible);
+				const focused = visible.filter(state => state.focused);
+				if (visible.length === 1) { eligible = [visible[0].endpoint]; }
+				else if (focused.length === 1) { eligible = [focused[0].endpoint]; }
+			}
 			if (eligible.length > 1) { throw new CommandError("webview_ambiguous", "More than one App WebView matches", "Select pageId from mobile_webview action=list."); }
 			page = await CdpPage.connect(eligible[0], signal); return await run(page);
 		} finally { page?.close(); for (const endpoint of endpoints) { await this.remove(endpoint); } }

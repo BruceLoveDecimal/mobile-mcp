@@ -142,9 +142,10 @@ export const SCREENS = [
   {
     id: 'image-composer',
     activity: WEB,
+    open: { point: { xRatio: 0.5, yRatio: 0.93 } },
     markers: ['Inspire me', 'Dream Image 2.0'],
     parent: 'image-generate',
-    via: 'tap the "Describe the image you expect..." bar at the bottom (it has no accessibility text, so open cannot tap it; screen.tap at about 50% width, 93% height)',
+    via: 'tap the verified prompt bar at the bottom; open uses the current device size at 50% width, 93% height',
     sections: [
       '"Reference" (reference image), the prompt field, "Inspire me", ratio "4 : 3"',
       'models, one row scrolling sideways: "Dream Image 2.0" (default), "GPT Image 2.5 Sunburst" (tag "New"), "GPT Image 2.5 Flare" (tag "New"), "Seedream 5.0 Pro", "Nano Banana 2", "Seedream 4.5"',

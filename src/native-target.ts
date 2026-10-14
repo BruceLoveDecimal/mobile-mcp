@@ -4,13 +4,18 @@ import { roleOf } from "./adapters/screen";
 import { ScreenElement, ScreenSize } from "./robot";
 
 export const fieldValue = (e: ScreenElement): string | undefined => e.value ?? e.text;
-export const editable = (e: ScreenElement): boolean => e.editable === true || roleOf(e) === "textbox";
+export const editable = (e: ScreenElement): boolean => e.editable !== false && (e.editable === true || roleOf(e) === "textbox");
 export const nativeIdentity = (e: ScreenElement): string => JSON.stringify([
 	e.type, e.identifier, e.label, e.name, editable(e) ? undefined : e.text, e.context, e.windowId,
 ]);
 
 export function rematch(original: ScreenElement, elements: ScreenElement[]): ScreenElement {
-	const candidates = elements.filter(e => nativeIdentity(e) === nativeIdentity(original));
+	let candidates = elements.filter(e => nativeIdentity(e) === nativeIdentity(original));
+	if (candidates.length > 1 && editable(original)) {
+		// Proxy input nodes can share all semantic fields. Stable dimensions distinguish them without trusting dump order.
+		const sameSize = candidates.filter(e => e.rect.width === original.rect.width && e.rect.height === original.rect.height);
+		if (sameSize.length === 1) { candidates = sameSize; }
+	}
 	if (candidates.length !== 1) {
 		const message = candidates.length ? "The observed component is no longer unique" : "The observed component is no longer present";
 		throw new CommandError("stale_ref", message, "Observe again or narrow a semantic target", { candidates: candidates.slice(0, 5) });

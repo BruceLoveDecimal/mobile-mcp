@@ -40,3 +40,9 @@ When refreshing the map, record only observed controls and navigation. Never inf
 The handle survives client shutdown and page loss. Querying reopens the AI Video H5 when needed. Navigation launches the existing task, recognizes the current page and follows only the remaining path; restart remains explicit. The opaque Profile fallback uses actual device dimensions and the verified MainActivity. Known Android ANR dialogs fail as `ui_unavailable` instead of navigation retries.
 
 Fresh host login uses `fillSecret` for the App password field because Android reports only bullet characters. The masked length is an input observation, not proof of the secret value or successful login. The adapter submits Continue once and verifies the account email before restoring Home. A wrong password, short paste or human verification request remains a failure/wait; no password is unmasked and no input write is retried.
+
+## Bounded navigation
+
+`open` defaults to a 30-second total navigation deadline. All recovery, route steps and arrival markers consume that same budget; each marker does not restart it. Known transient overlays and keyboards are handled before matching a page, and unchanged recovery stops without repeating the same tap. Missing routes fail before changing the current task. The image composer route uses the recorded prompt-bar position with the current device dimensions and confirms the composer markers. Native generation is never restarted or replayed to recover navigation.
+
+The engine ignores blank targets when selecting an App document. Multiple HTTP documents require a uniquely visible or focused page; otherwise choose an explicitly observed pageId. Native readonly fields are never written, and proxy input nodes remain ambiguous unless stable dimensions distinguish the observed field. A value assertion requires one matched field.

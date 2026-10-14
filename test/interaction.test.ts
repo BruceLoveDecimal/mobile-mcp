@@ -323,3 +323,35 @@ test("foreground timeout identifies its phase and cannot certify a hidden target
 	expect(result.error?.details?.stage).toBe("foreground");
 	expect(result.snapshot).toBeUndefined();
 });
+
+
+test("native input refuses explicitly readonly textboxes before tapping or typing", async () => {
+ const d = device([[element("", { type: "android.widget.EditText", editable: false })]]);
+ let fills = 0;
+ d.robot.fillText = async () => { fills++; };
+ const result = await d.ui.run("act", { action: "fill", target: { role: "textbox" }, text: "draft", timeoutMs: 30 });
+ expect(result.error?.code).toBe("not_editable");
+ expect(d.taps).toHaveLength(0);
+ expect(fills).toBe(0);
+});
+
+test("native ref rematching uses stable field dimensions when proxy nodes share identity", async () => {
+ const { rematch } = await import("../src/native-target");
+ const original = element("", { type: "android.widget.EditText", rect: { x: 100, y: 100, width: 900, height: 160 } });
+ const real = { ...original, ref: "@e2", rect: { ...original.rect, y: 500 } };
+ const proxy = { ...original, ref: "@e3", rect: { x: 30, y: 40, width: 16, height: 14 } };
+ expect(rematch(original, [real, proxy])).toBe(real);
+ expect(() => rematch(original, [real, { ...real, ref: "@e4" }])).toThrow("no longer unique");
+});
+
+test("an unfocused proxy cannot write into another active native field", async () => {
+ const real = element("", { type: "android.widget.EditText", focused: true, ref: "@e1", rect: { x: 100, y: 400, width: 900, height: 160 } });
+ const proxy = element("", { type: "android.widget.EditText", ref: "@e2", rect: { x: 30, y: 40, width: 16, height: 14 } });
+ const d = device([[real, proxy]]);
+ let fills = 0;
+ d.robot.fillText = async () => { fills++; };
+ const observed = await d.ui.run("observe", {});
+ const result = await d.ui.run("act", { action: "fill", ref: "@e2", snapshotId: observed.snapshot?.id, text: "draft" });
+ expect(result.error?.code).toBe("not_focused");
+ expect(fills).toBe(0);
+});

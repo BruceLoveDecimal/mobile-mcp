@@ -8,7 +8,7 @@ export default defineAdapter({
   args: [
     { name: 'screen', type: 'string', required: true, help: 'Screen id from dreamface-app/sitemap, e.g. home' },
     { name: 'restart', type: 'boolean', default: false, help: 'Terminate the app first, so the walk starts from the launch screen' },
-    { name: 'wait_ms', type: 'int', default: 15000, min: 1000, max: 120000, help: 'How long to wait for each screen to show its markers' },
+    { name: 'wait_ms', type: 'int', default: 30000, min: 1000, max: 120000, help: 'Total deadline for the whole navigation path, including recovery and arrival markers' },
   ],
   result: { kind: 'value', description: 'The screen reached', fields: { screen: 'string', path: 'array', package: 'string', foreground: 'object' } },
   async run(ctx) {

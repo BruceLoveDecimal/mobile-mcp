@@ -7,7 +7,7 @@ import { WebviewInteraction } from "../src/webview-interaction";
 
 async function fixture() {
 	const state = { value: "old", loader: "doc1", name: "Prompt", blocked: false, missing: false, partial: false,
-		probe: true, readError: false, writes: [] as string[] };
+		probe: true, readError: false, duplicate: false, writes: [] as string[] };
 	let selected = false;
 	const server = http.createServer((_req, res) => {
 		res.end(JSON.stringify([{ type: "page", id: "page1", title: "App", url: "https://app.example/ui", webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/page1` }]));
@@ -19,7 +19,7 @@ async function fixture() {
 		if (method === "Page.getFrameTree") { result = { frameTree: { frame: { id: "frame1", loaderId: state.loader } } }; }
 		if (method === "Accessibility.getFullAXTree") {
 			if (state.readError) { socket.send(JSON.stringify({ id, error: { message: "read failed" } })); return; }
-			result = { nodes: state.missing ? [] : [{ nodeId: "1", backendDOMNodeId: 12, role: { value: "textbox" }, name: { value: state.name }, ...(state.value ? { value: { value: state.value } } : {}) }] };
+			result = { nodes: state.missing ? [] : [{ nodeId: "1", backendDOMNodeId: 12, role: { value: "textbox" }, name: { value: state.name }, ...(state.value ? { value: { value: state.value } } : {}) }, ...(state.duplicate ? [{ nodeId: "2", backendDOMNodeId: 13, role: { value: "textbox" }, name: { value: "Other" } }] : [])] };
 		}
 		if (method === "DOM.resolveNode") { result = { object: { objectId: "object1" } }; }
 		if (method === "Runtime.callFunctionOn") {
@@ -106,4 +106,17 @@ test("WebView expectations use actual values and a read failure never proves hid
 		f.state.readError = true;
 		expect(await f.ui.expect({ ...base, target: { text: "Missing" }, state: "hidden" })).toMatchObject({ ok: false, error: { code: "webview_protocol_error" } });
 	} finally { await f.close(); }
+});
+
+
+test("single-field value assertions reject multiple textbox targets immediately", async () => {
+ const f = await fixture();
+ try {
+  f.state.duplicate = true;
+  const result = await f.ui.expect({ ...base, target: { role: "textbox" }, value: "old", timeoutMs: 300 });
+  expect(result).toMatchObject({ ok: false, error: { code: "selector_ambiguous" } });
+  expect(result.metrics.elapsedMs).toBeLessThan(250);
+  expect(f.state.writes).toHaveLength(0);
+  expect(await f.ui.expect({ ...base, target: { role: "textbox", name: "Prompt" }, value: "old" })).toMatchObject({ ok: true });
+ } finally { await f.close(); }
 });

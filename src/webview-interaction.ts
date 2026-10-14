@@ -164,6 +164,10 @@ export class WebviewInteraction {
 						(!args.target.role || n.role?.value === args.target.role) && (!args.target.name || n.name?.value === args.target.name) &&
 						(!args.target.text || (n.name?.value ?? "").includes(args.target.text)));
 					const state = args.state ?? "visible";
+					if (args.value !== undefined && state !== "hidden" && matches.length > 1) {
+						throw new CommandError("selector_ambiguous", "A field value assertion needs one textbox; narrow the name or use an observed ref", undefined,
+							{ candidates: matches.slice(0, 5).map(n => ({ role: n.role?.value, name: n.name?.value })) });
+					}
 					const held = state === "hidden" ? matches.length === 0 : matches.length > 0 && matches.every(n => {
 						const p = Object.fromEntries((n.properties ?? []).map(p => [p.name, p.value.value]));
 						// Chromium omits AXValue for an empty textbox, rather than returning an empty string.
