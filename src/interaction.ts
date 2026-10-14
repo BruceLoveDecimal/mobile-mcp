@@ -126,6 +126,9 @@ export class Interaction {
 					measured("ui_tree", () => robot!.getElementsOnScreen()),
 					robot!.getForegroundApp ? measured("foreground", () => robot!.getForegroundApp!()) : Promise.resolve(undefined),
 				]);
+				if (foreground.status === "rejected" && toErrorBody(foreground.reason).code === "system_ui_unresponsive") {
+					throw foreground.reason;
+				}
 				if (tree.status === "rejected") { throw tree.reason; }
 				if (foreground.status === "rejected") { throw foreground.reason; }
 				lastReadError = undefined;

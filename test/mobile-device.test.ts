@@ -5,6 +5,8 @@ import { MobileDevice } from "../src/mobile-device";
 
 function createMockMobileDevice(mockResponse: string): { device: MobileDevice; calls: string[][] } {
 	const device = new MobileDevice("test-device");
+	// Native Android reads are covered by android-ui.test; these tests exercise CLI response projection.
+	(device as any).androidUi = undefined;
 	const calls: string[][] = [];
 
 	(device as any).mobilecli.executeCommand = function(args: string[]): string {

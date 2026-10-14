@@ -110,13 +110,13 @@ test("WebView expectations use actual values and a read failure never proves hid
 
 
 test("single-field value assertions reject multiple textbox targets immediately", async () => {
- const f = await fixture();
- try {
-  f.state.duplicate = true;
-  const result = await f.ui.expect({ ...base, target: { role: "textbox" }, value: "old", timeoutMs: 300 });
-  expect(result).toMatchObject({ ok: false, error: { code: "selector_ambiguous" } });
-  expect(result.metrics.elapsedMs).toBeLessThan(250);
-  expect(f.state.writes).toHaveLength(0);
-  expect(await f.ui.expect({ ...base, target: { role: "textbox", name: "Prompt" }, value: "old" })).toMatchObject({ ok: true });
- } finally { await f.close(); }
+	const f = await fixture();
+	try {
+		f.state.duplicate = true;
+		const result = await f.ui.expect({ ...base, target: { role: "textbox" }, value: "old", timeoutMs: 300 });
+		expect(result).toMatchObject({ ok: false, error: { code: "selector_ambiguous" } });
+		expect(result.metrics.elapsedMs).toBeLessThan(250);
+		expect(f.state.writes).toHaveLength(0);
+		expect(await f.ui.expect({ ...base, target: { role: "textbox", name: "Prompt" }, value: "old" })).toMatchObject({ ok: true });
+	} finally { await f.close(); }
 });

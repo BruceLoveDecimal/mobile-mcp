@@ -239,8 +239,7 @@ export class Webviews {
 				const states = inspections.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
 				const visible = states.filter(state => state.visible);
 				const focused = visible.filter(state => state.focused);
-				if (visible.length === 1) { eligible = [visible[0].endpoint]; }
-				else if (focused.length === 1) { eligible = [focused[0].endpoint]; }
+				if (visible.length === 1) { eligible = [visible[0].endpoint]; } else if (focused.length === 1) { eligible = [focused[0].endpoint]; }
 			}
 			if (eligible.length > 1) { throw new CommandError("webview_ambiguous", "More than one App WebView matches", "Select pageId from mobile_webview action=list."); }
 			page = await CdpPage.connect(eligible[0], signal); return await run(page);

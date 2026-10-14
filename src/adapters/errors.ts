@@ -19,13 +19,15 @@ export const toErrorBody = (err: unknown): ErrorBody => {
 	const e = (err ?? {}) as { code?: unknown; message?: unknown; hint?: unknown; details?: unknown };
 	let code = typeof e.code === "string" && e.code ? e.code : "command_failed";
 	const message = String(e.message ?? err);
-	if (/Device ".*" not found|mobilecli is not available|device offline|device unauthorized|no devices\/emulators found/i.test(message)) {
+	if (/Device ["'].*["'] not found|No online adb device matches|mobilecli is not available|device offline|device unauthorized|no devices\/emulators found/i.test(message)) {
 		code = "device_unavailable";
 	}
 
 	if (/failed to dump UI|no XML content|uiautomator dump|device server did not start within|agent unreachable/i.test(message)) {
 		code = "ui_unavailable";
 	}
+	if (/UiAutomationService.*already registered/i.test(message)) { code = "ui_conflict"; }
+	if (/ANR in com\.android\.systemui|Android system UI.*(?:ANR|not responding)/i.test(message)) { code = "system_ui_unresponsive"; }
 
 	return {
 		code,

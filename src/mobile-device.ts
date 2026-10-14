@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Mobilecli } from "./mobilecli";
+import { AndroidUi } from "./android-ui";
 import { CommandError } from "./adapters/errors";
 import { ActionableError, Button, CommandContext, InstalledApp, Orientation, Robot, ScreenElement, ScreenSize, ScreenshotOptions, SwipeDirection } from "./robot";
 
@@ -121,6 +122,7 @@ const flattenUIElement = (element: UIElementResponse, context: string[] = [], an
 export class MobileDevice implements Robot {
 
 	private mobilecli: Mobilecli;
+	private androidUi?: AndroidUi;
 	private commandContext = new AsyncLocalStorage<CommandContext>();
 	public withCommandContext<T>(context: CommandContext, run: () => Promise<T>): Promise<T> {
 		return this.commandContext.run(context, run);
@@ -129,7 +131,10 @@ export class MobileDevice implements Robot {
 	public readonly fillText?: (text: string) => Promise<void>;
 	public constructor(private deviceId: string, private platform: "android" | "ios" = "android") {
 		this.mobilecli = new Mobilecli();
-		if (platform === "android") { this.fillText = text => this.pasteText(text, true); }
+		if (platform === "android") {
+			this.fillText = text => this.pasteText(text, true);
+			this.androidUi = new AndroidUi(deviceId, () => this.runCommand(["apps", "list"]));
+		}
 	}
 
 	private async runCommand(args: string[]): Promise<string> {
@@ -243,6 +248,7 @@ export class MobileDevice implements Robot {
 	}
 
 	public async getForegroundApp(): Promise<InstalledApp> {
+		if (this.androidUi) { return this.androidUi.foreground(this.commandContext.getStore()); }
 		const response = await this.runJsonCommand<ForegroundAppResponse>(["apps", "foreground"]);
 		return {
 			appName: response.data.appName || response.data.packageName,
@@ -327,6 +333,7 @@ export class MobileDevice implements Robot {
 	}
 
 	public async getElementsOnScreen(): Promise<ScreenElement[]> {
+		if (this.androidUi) { return this.androidUi.elements(this.commandContext.getStore()); }
 		const response = await this.runJsonCommand<DumpUIResponse>(["dump", "ui"]);
 		return response.data.elements.flatMap(element => flattenUIElement(element));
 	}

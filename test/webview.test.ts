@@ -20,7 +20,7 @@ test("AX observations retain hierarchy, state and redact protected input", () =>
 const fixture = async () => {
 	const calls: string[][] = [];
 	const methods: string[] = [];
- const state = { extraPage: false, bothVisible: false, onlyFirstFocused: false, badProbe: false };
+	const state = { extraPage: false, bothVisible: false, onlyFirstFocused: false, badProbe: false };
 	const server = http.createServer((req, res) => {
 		res.setHeader("Content-Type", "application/json");
 		res.end(JSON.stringify([{ type: "page", id: "p1", title: "App", url: "https://app.example/h5?token=private-token", webSocketDebuggerUrl: `ws://localhost:${port}/devtools/page/p1` }, ...(state.extraPage ? [{ type: "page", id: "p2", title: "Background", url: "https://app.example/background", webSocketDebuggerUrl: `ws://localhost:${port}/devtools/page/p2` }] : [])]));
@@ -28,7 +28,7 @@ const fixture = async () => {
 	const ws = new WebSocketServer({ server });
 	ws.on("connection", (socket, req) => socket.on("message", data => {
 		const { id, method, params } = JSON.parse(data.toString());methods.push(method);
- if (method === "Runtime.evaluate" && params?.expression?.includes("document.visibilityState")) { const active = !req.url?.includes("p2") || state.bothVisible; socket.send(JSON.stringify({ id, result: { result: { value: state.badProbe && req.url?.includes("p2") ? null : { visible: active, focused: active && (!state.onlyFirstFocused || !req.url?.includes("p2")) } } } })); }
+		if (method === "Runtime.evaluate" && params?.expression?.includes("document.visibilityState")) { const active = !req.url?.includes("p2") || state.bothVisible; socket.send(JSON.stringify({ id, result: { result: { value: state.badProbe && req.url?.includes("p2") ? null : { visible: active, focused: active && (!state.onlyFirstFocused || !req.url?.includes("p2")) } } } })); }
 		if (method === "Accessibility.getFullAXTree") {socket.send(JSON.stringify({ id, result: { nodes: [{ nodeId: "1", role: { value: "button" }, name: { value: "Generate" } }] } }));}
 	}));
 	await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -90,25 +90,25 @@ test("engine shutdown cancels borrowed pages and removes active forwarding", asy
 
 
 test("multiple App pages select only a uniquely visible document and remain ambiguous otherwise", async () => {
- const f = await fixture();
- try {
-  f.state.extraPage = true;
-  const snapshot = await f.manager.withPage("qa-device", "com.example.app", undefined, p => p.observe());
-  expect(snapshot.target.id).toBe("p1");
-  f.state.bothVisible = true;
-  await expect(f.manager.withPage("qa-device", "com.example.app", undefined, p => p.observe())).rejects.toMatchObject({ code: "webview_ambiguous" });
-  const explicit = await f.manager.withPage("qa-device", "com.example.app", "p2", p => p.observe());
-  expect(explicit.target.id).toBe("p2");
- } finally { await f.manager.close(); await f.close(); }
+	const f = await fixture();
+	try {
+		f.state.extraPage = true;
+		const snapshot = await f.manager.withPage("qa-device", "com.example.app", undefined, p => p.observe());
+		expect(snapshot.target.id).toBe("p1");
+		f.state.bothVisible = true;
+		await expect(f.manager.withPage("qa-device", "com.example.app", undefined, p => p.observe())).rejects.toMatchObject({ code: "webview_ambiguous" });
+		const explicit = await f.manager.withPage("qa-device", "com.example.app", "p2", p => p.observe());
+		expect(explicit.target.id).toBe("p2");
+	} finally { await f.manager.close(); await f.close(); }
 });
 
 
 test("a unique focused page wins among visible pages, but an unknown candidate is not substituted", async () => {
- const f = await fixture();
- try {
-  f.state.extraPage = true; f.state.bothVisible = true; f.state.onlyFirstFocused = true;
-  expect((await f.manager.withPage("qa-device", "com.example.app", undefined, p => p.observe())).target.id).toBe("p1");
-  f.state.badProbe = true;
-  await expect(f.manager.withPage("qa-device", "com.example.app", undefined, p => p.observe())).rejects.toMatchObject({ code: "webview_ambiguous" });
- } finally { await f.manager.close(); await f.close(); }
+	const f = await fixture();
+	try {
+		f.state.extraPage = true; f.state.bothVisible = true; f.state.onlyFirstFocused = true;
+		expect((await f.manager.withPage("qa-device", "com.example.app", undefined, p => p.observe())).target.id).toBe("p1");
+		f.state.badProbe = true;
+		await expect(f.manager.withPage("qa-device", "com.example.app", undefined, p => p.observe())).rejects.toMatchObject({ code: "webview_ambiguous" });
+	} finally { await f.manager.close(); await f.close(); }
 });
