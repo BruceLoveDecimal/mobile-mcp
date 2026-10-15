@@ -3,6 +3,16 @@ import { AdapterError, errors } from '@mobilenext/mobile-mcp/adapter-sdk';
 
 const byId = (screens, id) => screens.find((s) => s.id === id);
 
+/** Reopening the launcher activity can cover a usable screen with another splash instance. */
+export async function ensureForeground({ device }, pkg) {
+  let foreground;
+  try { foreground = await device.foreground?.(); }
+  catch (error) {
+    if (['app_unresponsive', 'system_ui_unresponsive', 'ui_conflict'].includes(error?.code)) throw error;
+  }
+  if (foreground?.packageName !== pkg) await device.launch(pkg);
+}
+
 /**
  * Bring the app to screen `id`: launch (or restart) it, jump with the deepest deep link on the way, then tap down the
  * map, waiting for every screen's markers. Returns the path taken.
@@ -30,7 +40,7 @@ export async function openScreen({ device, screen, expect, signal }, screens, id
   }
   const pkg = await device.package();
   if (restart) await device.restart(pkg);
-  else await device.launch(pkg);
+  else await ensureForeground({ device }, pkg);
 
   // One navigation budget covers the whole path, rather than restarting for every marker/tap.
   const deadline = Date.now() + waitMs;

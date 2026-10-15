@@ -10,7 +10,7 @@ export const nativeIdentity = (e: ScreenElement): string => JSON.stringify([
 ]);
 
 export function rematch(original: ScreenElement, elements: ScreenElement[]): ScreenElement {
-	let candidates = elements.filter(e => nativeIdentity(e) === nativeIdentity(original));
+	let candidates = elements.filter(e => nativeIdentity(e) === nativeIdentity(original) && (original.visible === false || e.visible !== false));
 	if (candidates.length > 1 && editable(original)) {
 		// Proxy input nodes can share all semantic fields. Stable dimensions distinguish them without trusting dump order.
 		const sameSize = candidates.filter(e => e.rect.width === original.rect.width && e.rect.height === original.rect.height);
@@ -34,7 +34,8 @@ export function actionPoint(target: ScreenElement, elements: ScreenElement[], si
 	const blocker = elements.find(e => e !== target && e.visible !== false && e.enabled !== false &&
 		(e.clickable || editable(e) || roleOf(e) === "button") &&
 		x >= e.rect.x && y >= e.rect.y && x < e.rect.x + e.rect.width && y < e.rect.y + e.rect.height &&
-		!(e.ref && target.ancestorRefs?.includes(e.ref)) && !(target.ref && e.ancestorRefs?.includes(target.ref)));
+		!(e.ref && target.ancestorRefs?.includes(e.ref)) && !(target.ref && e.ancestorRefs?.includes(target.ref)) &&
+		!(e.ref && target.actionableRef === e.ref));
 	// A native dump cannot establish arbitrary z order. Refuse ambiguous overlaps instead of guessing.
 	if (blocker) { throw new CommandError("intercepted", "Another actionable element overlaps the target", "Dismiss the overlay and observe again", { blocker }); }
 	return [x, y];

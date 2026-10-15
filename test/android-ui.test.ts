@@ -1,6 +1,47 @@
 // Android reads must use the existing automation owner and resolve the live AVD transport.
 import { expect, test } from "@playwright/test";
 import { AndroidUi } from "../src/android-ui";
+import { actionPoint, rematch } from "../src/native-target";
+import { resolveTarget } from "../src/adapters/screen";
+
+test("hidden proxy inputs do not make a visible composer label ambiguous", () => {
+	const label = { ref: "@label", type: "android.widget.TextView", text: "Compose", visible: true, rect: { x: 0, y: 0, width: 100, height: 30 } };
+	const hidden = { ...label, ref: "@proxy", type: "android.widget.EditText", editable: true, visible: false };
+	expect(resolveTarget([label, hidden], { text: "Compose" })).toEqual([label]);
+	expect(rematch(label, [label, { ...label, ref: "@hidden", visible: false }])).toBe(label);
+});
+
+test("a cover image uses sibling labels while unrelated overlaps remain blocked", async () => {
+	const ui = new AndroidUi("phone", async () => {}, {
+		adb: async args => args[0] === "devices" ? "phone\tdevice\n" : "phone tcp:12345 localabstract:mobilecli-server",
+		rpc: async () => ({ hierarchy: [{ class: "android.view.ViewGroup", rect: { x: 0, y: 0, width: 100, height: 100 }, children: [
+			{ class: "android.widget.ImageView", clickable: true, rect: { x: 0, y: 0, width: 100, height: 100 } },
+			{ class: "android.widget.TextView", text: "Card A", rect: { x: 10, y: 10, width: 40, height: 20 } },
+		] }] }),
+	});
+	const elements = await ui.elements();
+	expect(elements[1].name).toBe("Card A");
+	expect(elements[2].actionableRef).toBe(elements[1].ref);
+	expect(actionPoint(elements[2], elements)).toEqual([30, 20]);
+	const overlay = { ...elements[1], ref: "@overlay", name: "Unrelated", ancestorRefs: [] };
+	expect(() => actionPoint(elements[2], [...elements, overlay])).toThrow("overlaps");
+});
+
+test("unlabelled clickable cards retain descendant semantics when siblings reorder", async () => {
+	let labels = ["Card A", "Card B"];
+	const ui = new AndroidUi("phone", async () => {}, {
+		adb: async args => args[0] === "devices" ? "phone\tdevice\n" : "phone tcp:12345 localabstract:mobilecli-server",
+		rpc: async () => ({ hierarchy: labels.map((text, i) => ({ class: "android.view.ViewGroup", clickable: true,
+			rect: { x: i * 100, y: 0, width: 90, height: 90 }, children: [{ class: "android.widget.TextView", text, rect: { x: i * 100, y: 0, width: 90, height: 20 } }] })) }),
+	});
+	const before = await ui.elements();
+	expect(before[0].name).toBe("Card A");
+	labels = ["Card B", "Card A"];
+	expect(rematch(before[0], await ui.elements()).rect.x).toBe(100);
+	labels = ["Card A", "Card A"];
+	const duplicate = await ui.elements();
+	expect(() => rematch(before[0], duplicate)).toThrow("no longer unique");
+});
 
 test("a restarted AVD reads through its new serial without uiautomator fallback", async () => {
 	const calls: string[][] = [];
@@ -38,6 +79,14 @@ test("system UI ANR is distinguished from a missing foreground app", async () =>
 		rpc: async () => ({}),
 	});
 	await expect(ui.foreground()).rejects.toMatchObject({ code: "system_ui_unresponsive" });
+});
+
+test("an application ANR retains the affected package instead of becoming unavailable UI", async () => {
+	const ui = new AndroidUi("phone", async () => {}, {
+		adb: async args => args[0] === "devices" ? "phone\tdevice\n" : "mCurrentFocus=Window{abc u0 Application Not Responding: com.demo}",
+		rpc: async () => ({}),
+	});
+	await expect(ui.foreground()).rejects.toMatchObject({ code: "app_unresponsive", details: { packageName: "com.demo" } });
 });
 
 test("a cold reader bootstraps only the persistent owner and retains child state", async () => {

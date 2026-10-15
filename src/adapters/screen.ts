@@ -85,7 +85,7 @@ const inside = (inner: ScreenElement, outer: ScreenElement): boolean =>
 	inner.rect.x + inner.rect.width <= outer.rect.x + outer.rect.width &&
 	inner.rect.y + inner.rect.height <= outer.rect.y + outer.rect.height;
 
-const visible = (e: ScreenElement): boolean => e.rect.width > 0 && e.rect.height > 0;
+const visible = (e: ScreenElement): boolean => e.visible !== false && e.rect.width > 0 && e.rect.height > 0;
 
 /** One semantic selector. Fields constrain the same element; locator chaining still searches descendants. */
 export interface ElementTarget {
@@ -399,7 +399,7 @@ export class Screen {
 		try {
 			return new ScreenSnapshot(this, true, await this.screenDriver.elements());
 		} catch (err: any) {
-			if (err?.code === "cancelled") {
+			if (["cancelled", "system_ui_unresponsive", "app_unresponsive", "ui_conflict"].includes(err?.code)) {
 				throw err;
 			}
 

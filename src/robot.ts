@@ -29,6 +29,8 @@ export interface ScreenElement {
 	label?: string;
 	text?: string;
 	name?: string;
+	/** A label covered by its own component's sole clickable sibling, computed from the current native tree. */
+	actionableRef?: string;
 	value?: string;
 	identifier?: string;
 	rect: ScreenElementRect;

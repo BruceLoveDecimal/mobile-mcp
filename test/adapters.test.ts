@@ -12,7 +12,14 @@ import { coerceArgs } from "../src/adapters/schema";
 import { importFile } from "../src/adapters/import";
 import { BUILTIN_ADAPTERS_DIR, defaultSources, ensureBuiltinSource, ensureManagedSource, SDK_ENTRY } from "../src/adapters/sources";
 import { DeviceLocks } from "../src/adapters/device-lock";
+import { Screen, ScreenDriver } from "../src/adapters/screen";
 import { Robot, ScreenElement } from "../src/robot";
+
+test("screen snapshots propagate a typed app ANR instead of returning an unreadable empty screen", async () => {
+	const robot = { getElementsOnScreen: async () => { throw Object.assign(new Error("app ANR"), { code: "app_unresponsive" }); } } as unknown as Robot;
+	const screen = new Screen(new ScreenDriver(async () => robot));
+	await expect(screen.snapshot()).rejects.toMatchObject({ code: "app_unresponsive" });
+});
 
 // ── helpers ──
 

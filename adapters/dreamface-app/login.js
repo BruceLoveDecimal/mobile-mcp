@@ -7,7 +7,7 @@
 // A verification code ("Enter the code that was sent to ...") is never handled here: the command waits up to
 // `verify_wait_sec` for a person to enter it on the device, and fails with `verification_required` otherwise.
 import { AdapterError, defineAdapter, errors } from '@mobilenext/mobile-mcp/adapter-sdk';
-import { openScreen } from './_navigate.js';
+import { ensureForeground, openScreen } from './_navigate.js';
 import { SCREENS } from './_sitemap.js';
 import { isGuest, logOut, openSettings, readAccount, sameEmail, sleep, waitForSignedInSettings } from './_login.js';
 
@@ -33,7 +33,7 @@ export default defineAdapter({
     if (!email || !args.password) throw errors.argument('email and password are required');
     const deadline = Date.now() + args.timeout_sec * 1000;
     const pkg = await device.package();
-    await device.launch(pkg);
+    await ensureForeground(ctx, pkg);
 
     const finish = async (fresh) => {
       await openScreen(ctx, SCREENS, 'home', { waitMs: Math.min(60000, Math.max(1, deadline - Date.now())) });

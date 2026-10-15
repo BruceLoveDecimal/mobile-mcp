@@ -28,6 +28,18 @@ interface Transport {
 	rpc(port: number, context: CommandContext): Promise<unknown>;
 }
 
+// Blank card containers need their children's semantics, not dump order or screen coordinates, to remain identifiable.
+const descendantName = (node: Node): string => {
+	const labels: string[] = [];
+	const visit = (child: Node) => {
+		if (child.visible === false || child.editable) { return; }
+		const label = child["content-desc"] || child.text || child.hint;
+		if (label) { labels.push(label); } else { child.children?.forEach(visit); }
+	};
+	node.children?.forEach(visit);
+	return labels.join(" ").slice(0, 256);
+};
+
 const transport: Transport = {
 	adb: (args, context) => new Promise((resolve, reject) => {
 		execFile(getAdbPath(), args, { encoding: "utf8", timeout: Math.max(1, context.deadline - Date.now()), signal: context.signal, maxBuffer: 8 * 1024 * 1024 },
@@ -72,6 +84,10 @@ export class AndroidUi {
 			throw new CommandError("system_ui_unresponsive", "Android system UI has an ANR dialog; recover the device before continuing", undefined, { serial });
 		}
 		for (const line of focus) {
+			const anr = line.match(/Application Not Responding: ([\w.]+)/);
+			if (anr) { throw new CommandError("app_unresponsive", `Android application ${anr[1]} has an ANR dialog; no action was sent`, "Inspect the app before explicitly restarting it", { serial, packageName: anr[1] }); }
+		}
+		for (const line of focus) {
 			const match = line.match(/\bu\d+\s+([\w.]+)\/([^\s}]+)/);
 			if (match) { return { packageName: match[1], appName: match[1], activity: match[2] }; }
 		}
@@ -102,20 +118,36 @@ export class AndroidUi {
 			if (!Array.isArray(result?.hierarchy) || !result.hierarchy.length) { throw new Error("DeviceServer returned no UI hierarchy"); }
 			const elements: ScreenElement[] = [];
 			let systemAnr = false;
-			const visit = (node: Node, ancestors: string[], ancestorRefs: string[]) => {
+			const visit = (node: Node, ancestors: string[], ancestorRefs: string[], componentName?: string) => {
 				if (["android", "com.android.systemui"].includes(node.package ?? "") && /^(?:System UI|Process system|系统界面|系统 UI|系统进程).*(?:isn.t responding|未响应|无响应)/i.test(node.text ?? "")) {
 					systemAnr = true;
 				}
 				const ref = `@e${elements.length + 1}`;
 				const element: ScreenElement = {
 					ref, type: node.class, text: node.text, label: node["content-desc"] || node.hint,
+					...(node.clickable && !node.text && !node["content-desc"] && !node.hint ? { name: descendantName(node) || componentName } : {}),
 					identifier: node["resource-id"], rect: node.rect, focused: node.focused, selected: node.selected,
 					checked: node.checked, enabled: node.enabled, visible: node.visible, clickable: node.clickable,
 					editable: node.editable, context: ancestors, ancestorRefs,
 				};
 				elements.push(element);
 				const identity = JSON.stringify([node.class, node["resource-id"], element.label, node.editable ? undefined : node.text]);
-				for (const child of node.children ?? []) { visit(child, [...ancestors, identity], [...ancestorRefs, ref]); }
+				const children = node.children ?? [];
+				const clickable = children.filter(child => child.clickable);
+				const localName = clickable.length === 1 ? descendantName(node) : undefined;
+				const start = elements.length;
+				for (const child of children) { visit(child, [...ancestors, identity], [...ancestorRefs, ref], localName); }
+				if (clickable.length === 1 && localName) {
+					const siblings = elements.slice(start).filter(e => e.ancestorRefs?.at(-1) === ref);
+					const control = siblings.find(e => e.clickable);
+					if (control) {
+						const r = control.rect;
+						for (const label of siblings.filter(e => !e.clickable && !e.editable && (e.text || e.label))) {
+							const b = label.rect;
+							if (b.x >= r.x && b.y >= r.y && b.x + b.width <= r.x + r.width && b.y + b.height <= r.y + r.height) { label.actionableRef = control.ref; }
+						}
+					}
+				}
 			};
 			for (const node of result.hierarchy) { visit(node, [], []); }
 			if (systemAnr) {

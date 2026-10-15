@@ -11,6 +11,19 @@ function ctx(states: string[][]) {
 		screen: { snapshot: async () => ({ ok: true, texts: states[i] ?? states.at(-1)!, elements: [], byText: (t: string) => (states[i] ?? states.at(-1)!).includes(t) ? { text: t } : undefined, byTestId: (id: string) => id === "ivClose" && (states[i] ?? []).includes("Popup") ? { text: "Close" } : undefined, tap: async () => { actions.push("Close"); i++; } }), getByText: (t: string) => ({ tap: async () => { actions.push(t); i++; } }) },
 		expect: () => ({ toBeVisible: async () => {} }) };
 }
+test("navigation preserves an already foreground app instead of reopening its splash activity", async () => {
+	const m = await navigation(); const c = ctx([["Home"]]); let launches = 0;
+	c.device.launch = async () => { launches++; };
+	await m.openScreen(c, screens, "home", { waitMs: 1000 });
+	expect(launches).toBe(0);
+});
+test("foreground admission never relaunches through an application ANR", async () => {
+	const m = await navigation(); const c = ctx([["Home"]]); let launches = 0;
+	c.device.launch = async () => { launches++; };
+	c.device.foreground = async () => { throw Object.assign(new Error("app ANR"), { code: "app_unresponsive" }); };
+	await expect(m.ensureForeground(c, "pkg")).rejects.toMatchObject({ code: "app_unresponsive" });
+	expect(launches).toBe(0);
+});
 test("known transient popup is closed before matching home markers behind it", async () => {
 	const m = await navigation(); const c = ctx([["Home", "Popup"], ["Home"], ["Editor"]]);
 	await m.openScreen(c, screens, "editor", { waitMs: 100 });

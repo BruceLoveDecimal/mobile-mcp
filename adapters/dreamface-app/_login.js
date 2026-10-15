@@ -22,7 +22,9 @@ export async function openSettings({ device, screen }, waitMs) {
   let profileTaps = 0; // Profile → gear attempts that did not reach Settings: a dialog lies over the tab bar
   while (Date.now() < deadline) {
     let foreground = null;
-    try { foreground = await device.foreground(); } catch { /* not every driver reports it */ }
+    try { foreground = await device.foreground(); } catch (error) {
+      if (['app_unresponsive', 'system_ui_unresponsive', 'ui_conflict'].includes(error?.code)) throw error;
+    }
     if (foreground?.packageName && foreground.packageName !== pkg) {
       await device.launch(pkg); // a back press too many left the app
       blank = 0;
